@@ -19,6 +19,24 @@ npm run db:seed
 npm run dev
 ```
 
+### Startup Process (recommended each session)
+
+1. Start backend first:
+
+```bash
+npm run dev:server
+```
+
+2. Start apps you need:
+
+```bash
+npm run dev:tablet
+npm run dev:aggregator
+npm run dev:dashboard
+```
+
+3. In Aggregator (`http://localhost:2542`), paste/import schedule before running predictions.
+
 ### Local URLs
 
 - API server: `http://localhost:2540/health`
@@ -74,6 +92,10 @@ If you want scouts to access only the tablet UI, deploy only `apps/tablet` and s
 - Tablet deploy target: `apps/tablet`
 - Keep `apps/aggregator` and `apps/dashboard` local/private on your laptop.
 - Tablet app already supports offline queue + JSON download if backend is unreachable.
+
+GitHub workflow included:
+- `.github/workflows/deploy-tablet.yml` builds and deploys **only** `apps/tablet` to GitHub Pages.
+- Scouts should use the Pages URL from that workflow deployment.
 
 ---
 
