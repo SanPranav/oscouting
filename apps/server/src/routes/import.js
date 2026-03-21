@@ -347,6 +347,63 @@ function parseCsvText(csvText) {
   });
 }
 
+function teamToNumber(value) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseInt(String(value).replace(/[^0-9]/g, ''), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseScheduleJsonText(text, eventKey) {
+  const parsed = JSON.parse(text);
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.matches)
+      ? parsed.matches
+      : Array.isArray(parsed?.schedule)
+        ? parsed.schedule
+        : [];
+
+  const records = [];
+  for (const item of list) {
+    const compLevel = String(item.comp_level || item.compLevel || 'qm').toLowerCase();
+    const matchNumber = Number.parseInt(item.match_number ?? item.matchNumber ?? '', 10);
+    const setNumber = Number.parseInt(item.set_number ?? item.setNumber ?? '1', 10) || 1;
+    if (!Number.isFinite(matchNumber) || !compLevel) continue;
+
+    const normalizedComp = ['qm', 'qf', 'sf', 'f'].includes(compLevel) ? compLevel : 'qm';
+    const defaultMatchKey =
+      normalizedComp === 'qm'
+        ? `${eventKey}_qm${matchNumber}`
+        : `${eventKey}_${normalizedComp}${setNumber}m${matchNumber}`;
+
+    const alliances = item.alliances || {};
+    const redAlliance = alliances.red || {};
+    const blueAlliance = alliances.blue || {};
+
+    const redKeys = Array.isArray(redAlliance.team_keys) ? redAlliance.team_keys : [];
+    const blueKeys = Array.isArray(blueAlliance.team_keys) ? blueAlliance.team_keys : [];
+
+    records.push({
+      match_key: item.match_key || item.key || item.matchKey || defaultMatchKey,
+      scheduled_date: item.scheduled_date || item.scheduledDate || '',
+      scheduled_time: item.scheduled_time || item.scheduledTime || '',
+      comp_level: normalizedComp,
+      match_number: matchNumber,
+      set_number: setNumber,
+      red1: teamToNumber(item.red1) ?? teamToNumber(redKeys[0]),
+      red2: teamToNumber(item.red2) ?? teamToNumber(redKeys[1]),
+      red3: teamToNumber(item.red3) ?? teamToNumber(redKeys[2]),
+      blue1: teamToNumber(item.blue1) ?? teamToNumber(blueKeys[0]),
+      blue2: teamToNumber(item.blue2) ?? teamToNumber(blueKeys[1]),
+      blue3: teamToNumber(item.blue3) ?? teamToNumber(blueKeys[2]),
+      red_score: item.red_score ?? redAlliance.score ?? null,
+      blue_score: item.blue_score ?? blueAlliance.score ?? null
+    });
+  }
+
+  return records;
+}
+
 router.post('/csv', async (req, res) => {
   try {
     const { eventKey, csvText } = req.body || {};
@@ -365,6 +422,16 @@ router.post('/paste', async (req, res) => {
   try {
     const { eventKey = '2026casnd', text, type = 'auto' } = req.body || {};
     if (!text) return res.status(400).json({ error: 'text is required' });
+
+    const trimmed = String(text).trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      const jsonRecords = parseScheduleJsonText(trimmed, eventKey);
+      if (!jsonRecords.length) {
+        return res.status(400).json({ error: 'JSON schedule contains no matches' });
+      }
+      const result = await importSchedule(jsonRecords, eventKey);
+      return res.json({ ...result, type: 'schedule_json' });
+    }
 
     const lines = String(text).split(/\r?\n/).filter(Boolean);
     const headerLine = lines[0] || '';
