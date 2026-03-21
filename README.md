@@ -1,8 +1,8 @@
-# ⚡ TEAM 3749 FRC SCOUTING SYSTEM — MASTER META-PROMPT
+# TEAM 3749 FRC SCOUTING SYSTEM 
 > **Version**: 2026 Season | **Stack**: React · Supabase/PostgreSQL · Lemonade Server · SmolLM3-3B-GGUF · QR Transfer · TBA Mirror
 > **Repo**: Monorepo — one repository, all modules
 
-## ✅ Runnable Setup In This Repo (No Supabase)
+## Runnable Setup In This Repo (No Supabase)
 
 This repository is now scaffolded with a **free local backend** you can run immediately:
 - Backend: `Express` + `Prisma`
@@ -482,7 +482,7 @@ CREATE INDEX idx_ext_match   ON external_scout_imports(match_number);
 
 ---
 
-## 🤖 AI LAYER — LEMONADE SERVER + SmolLM3-3B-GGUF
+## AI LAYER — LEMONADE SERVER + SmolLM3-3B-GGUF
 
 You are running **Lemonade Server** (not Ollama) as the local inference backend. The model is **SmolLM3-3B-GGUF**. Lemonade exposes an OpenAI-compatible REST API at `http://localhost:8080/v1`.
 
@@ -613,7 +613,7 @@ OUTPUT SCHEMA: { ...external_scout_imports row... }
 
 ---
 
-## 🕷️ TEAM 2485 ANALYTICS SCRAPER
+## TEAM 2485 ANALYTICS SCRAPER
 
 **Target URL**: `https://frc2485analytics.vercel.app/sudo`
 
@@ -808,7 +808,7 @@ export { scrapeAndImport, mergeExternalIntoStats };
 
 ---
 
-## 📡 QR CODE TRANSFER ENGINE
+## QR CODE TRANSFER ENGINE
 
 ```javascript
 // packages/qr/encode.js
@@ -883,7 +883,7 @@ export function onQRFrameScanned(rawString, onBatchComplete) {
 
 ---
 
-## 🌐 TBA MIRROR SYNC SCRIPT
+## TBA MIRROR SYNC SCRIPT
 
 ```javascript
 // scripts/sync-tba.js
@@ -986,7 +986,7 @@ sync().catch(console.error);
 
 ---
 
-## 🔮 PREDICTION ENGINE
+## PREDICTION ENGINE
 
 ```sql
 -- Alliance Predicted Score
@@ -1061,7 +1061,7 @@ export async function predictMatch(eventKey, matchKey) {
 
 ---
 
-## 🕸️ SPIDER GRAPH RECOMPUTE TRIGGER
+## SPIDER GRAPH RECOMPUTE TRIGGER
 
 ```sql
 CREATE OR REPLACE FUNCTION recompute_team_stats()
@@ -1124,7 +1124,7 @@ FOR EACH ROW EXECUTE FUNCTION recompute_team_stats();
 
 ---
 
-## 📦 MONOREPO SETUP
+## MONOREPO SETUP
 
 ```json
 // package.json (root)
@@ -1159,7 +1159,7 @@ EVENT_KEY=2026casj
 
 ---
 
-## ⚙️ LEMONADE SERVER SETUP
+## LEMONADE SERVER SETUP
 
 ```bash
 # Install Lemonade Server (AMD/NVIDIA GPU or CPU-only)
@@ -1183,7 +1183,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 ---
 
-## 🚀 EVENT DAY RUNBOOK
+## EVENT DAY RUNBOOK
 
 ```bash
 # T-24 hours: sync TBA data
@@ -1220,7 +1220,7 @@ node packages/scraper/scrape-2485.js 2026casj
 
 ---
 
-## ⚠️ CONFLICT RESOLUTION RULES
+## CONFLICT RESOLUTION RULES
 
 | Conflict | Strategy |
 |----------|----------|
@@ -1251,7 +1251,7 @@ CREATE POLICY "public_read" ON match_scouting_reports
 
 ---
 
-## 🧩 TECHNOLOGY SUMMARY
+## TECHNOLOGY SUMMARY
 
 | Layer | Technology |
 |-------|-----------|
