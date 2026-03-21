@@ -1,0 +1,13 @@
+{
+  "name": "@3749/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/normalize.js",
+  "scripts": {
+    "build": "echo \"ai build not required\""
+  },
+  "dependencies": {
+    "@3749/shared": "*"
+  }
+}

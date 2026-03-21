@@ -1,0 +1,14 @@
+{
+  "name": "@3749/prediction",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/predict-match.js",
+  "scripts": {
+    "build": "echo \"prediction build not required\""
+  },
+  "dependencies": {
+    "@3749/ai": "*",
+    "@3749/db": "*"
+  }
+}

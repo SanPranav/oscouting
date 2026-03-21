@@ -1,0 +1,41 @@
+{
+  "name": "team3749-scouting",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n SERVER,TABLET,AGGREGATOR,DASHBOARD -c blue,green,magenta,cyan \"npm run dev:server\" \"npm run dev:tablet\" \"npm run dev:aggregator\" \"npm run dev:dashboard\"",
+    "predev:server": "sh -c 'p=${PORT:-2540}; lsof -ti :$p | xargs -r kill -9'",
+    "dev:server": "npm --workspace @3749/server run dev",
+    "dev:tablet": "npm --workspace @3749/tablet run dev",
+    "dev:aggregator": "npm --workspace @3749/aggregator run dev",
+    "dev:dashboard": "npm --workspace @3749/dashboard run dev",
+    "share:tablet": "npx localtunnel --port 2541",
+    "build": "npm run -ws build",
+    "db:generate": "npm --workspace @3749/db run generate",
+    "db:migrate": "npm --workspace @3749/db run migrate",
+    "db:seed": "npm --workspace @3749/db run seed",
+    "sync-tba": "node scripts/sync-tba.js",
+    "run-ai": "node scripts/run-ai.js",
+    "ai:serve": "lemonade server --port 8080",
+    "scrape": "node scripts/scrape-2485.js",
+    "import-csv": "node scripts/import-csv.js",
+    "export-csv": "node scripts/export-csv.js"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^9.2.1",
+    "postcss": "^8.5.6",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "dependencies": {
+    "lucide-react": "^0.512.0"
+  }
+}

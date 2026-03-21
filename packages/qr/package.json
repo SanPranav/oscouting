@@ -1,0 +1,16 @@
+{
+  "name": "@3749/qr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "echo \"qr build not required\""
+  },
+  "dependencies": {
+    "crc": "^4.3.2",
+    "pako": "^2.1.0",
+    "qrcode": "^1.5.4",
+    "uuid": "^11.1.0"
+  }
+}

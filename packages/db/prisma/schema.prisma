@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Event {
+  eventKey     String   @id @map("event_key")
+  name         String
+  shortName    String?  @map("short_name")
+  city         String?
+  stateProv    String?  @map("state_prov")
+  country      String?
+  startDate    DateTime? @map("start_date")
+  endDate      DateTime? @map("end_date")
+  year         Int
+  eventType    Int?     @map("event_type")
+  week         Int?
+  website      String?
+  tbaSyncedAt  DateTime? @map("tba_synced_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  matches      Match[]
+  rankings     Ranking[]
+  matchReports MatchScoutingReport[]
+  teamStats    TeamAggregatedStat[]
+  external     ExternalScoutImport[]
+
+  @@map("events")
+}
+
+model Team {
+  teamNumber   Int      @id @map("team_number")
+  nickname     String?
+  fullName     String?  @map("full_name")
+  city         String?
+  stateProv    String?  @map("state_prov")
+  country      String?
+  rookieYear   Int?     @map("rookie_year")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  rankings     Ranking[]
+  teamStats    TeamAggregatedStat[]
+  matchReports MatchScoutingReport[]
+  external     ExternalScoutImport[]
+
+  @@map("teams")
+}
+
+model Match {
+  matchKey        String   @id @map("match_key")
+  eventKey        String   @map("event_key")
+  compLevel       String   @map("comp_level")
+  matchNumber     Int      @map("match_number")
+  setNumber       Int      @default(1) @map("set_number")
+  redTeam1        Int?     @map("red_team_1")
+  redTeam2        Int?     @map("red_team_2")
+  redTeam3        Int?     @map("red_team_3")
+  blueTeam1       Int?     @map("blue_team_1")
+  blueTeam2       Int?     @map("blue_team_2")
+  blueTeam3       Int?     @map("blue_team_3")
+  redScore        Int?     @map("red_score")
+  blueScore       Int?     @map("blue_score")
+  winningAlliance String?  @map("winning_alliance")
+  predictedTime   DateTime? @map("predicted_time")
+  actualTime      DateTime? @map("actual_time")
+  tbaSyncedAt     DateTime? @map("tba_synced_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+
+  @@index([eventKey])
+  @@map("matches")
+}
+
+model Ranking {
+  id            Int      @id @default(autoincrement())
+  eventKey      String   @map("event_key")
+  teamNumber    Int      @map("team_number")
+  rank          Int?
+  rankingPoints Float?   @map("ranking_points")
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  ties          Int      @default(0)
+  dq            Int      @default(0)
+  matchesPlayed Int      @default(0) @map("matches_played")
+  tbaSyncedAt   DateTime? @map("tba_synced_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+  team  Team  @relation(fields: [teamNumber], references: [teamNumber], onDelete: Cascade)
+
+  @@unique([eventKey, teamNumber])
+  @@map("rankings")
+}
+
+model MatchScoutingReport {
+  id                    Int      @id @default(autoincrement())
+  eventKey              String   @map("event_key")
+  matchKey              String?  @map("match_key")
+  teamNumber            Int      @map("team_number")
+  scoutName             String   @map("scout_name")
+  allianceColor         String?  @map("alliance_color")
+  matchNumber           Int?     @map("match_number")
+  compLevel             String   @default("qm") @map("comp_level")
+  autoFuelAuto          Int      @default(0) @map("auto_fuel_auto")
+  autoFuelMissed        Int      @default(0) @map("auto_fuel_missed")
+  autoTowerClimb        Int      @default(0) @map("auto_tower_climb")
+  autoMobility          Boolean  @default(false) @map("auto_mobility")
+  autoHubShiftWon       Boolean  @default(false) @map("auto_hub_shift_won")
+  teleopFuelScored      Int      @default(0) @map("teleop_fuel_scored")
+  teleopFuelMissed      Int      @default(0) @map("teleop_fuel_missed")
+  teleopDefenseRating   Int?     @map("teleop_defense_rating")
+  teleopSpeedRating     Int?     @map("teleop_speed_rating")
+  teleopCrossedBump     Boolean  @default(false) @map("teleop_crossed_bump")
+  teleopCrossedTrench   Boolean  @default(false) @map("teleop_crossed_trench")
+  endgameResult         String?  @map("endgame_result")
+  endgameTowerPoints    Int      @default(0) @map("endgame_tower_points")
+  endgameAttemptedClimb Boolean  @default(false) @map("endgame_attempted_climb")
+  robotDisabled         Boolean  @default(false) @map("robot_disabled")
+  robotTipped           Boolean  @default(false) @map("robot_tipped")
+  foulsCommitted        Int      @default(0) @map("fouls_committed")
+  generalNotes          String?  @map("general_notes")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+  team  Team  @relation(fields: [teamNumber], references: [teamNumber], onDelete: Cascade)
+
+  @@index([eventKey])
+  @@index([teamNumber])
+  @@map("match_scouting_reports")
+}
+
+model TeamAggregatedStat {
+  id                    Int      @id @default(autoincrement())
+  eventKey              String   @map("event_key")
+  teamNumber            Int      @map("team_number")
+  matchesScouted        Int      @default(0) @map("matches_scouted")
+  avgAutoTotalPoints    Float?   @map("avg_auto_total_points")
+  avgTeleopTotalPoints  Float?   @map("avg_teleop_total_points")
+  avgEndgamePoints      Float?   @map("avg_endgame_points")
+  climbAttemptRate      Float?   @map("climb_attempt_rate")
+  climbSuccessRate      Float?   @map("climb_success_rate")
+  disableRate           Float?   @map("disable_rate")
+  foulRate              Float?   @map("foul_rate")
+  spiderAuto            Float?   @map("spider_auto")
+  spiderTeleop          Float?   @map("spider_teleop")
+  spiderDefense         Float?   @map("spider_defense")
+  spiderCycleSpeed      Float?   @map("spider_cycle_speed")
+  spiderReliability     Float?   @map("spider_reliability")
+  spiderEndgame         Float?   @map("spider_endgame")
+  lastComputed          DateTime @default(now()) @map("last_computed")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+  team  Team  @relation(fields: [teamNumber], references: [teamNumber], onDelete: Cascade)
+
+  @@unique([eventKey, teamNumber])
+  @@index([eventKey])
+  @@index([teamNumber])
+  @@map("team_aggregated_stats")
+}
+
+model ExternalScoutImport {
+  id               Int      @id @default(autoincrement())
+  sourceTeam       Int      @default(2485) @map("source_team")
+  eventKey         String   @map("event_key")
+  teamNumber       Int?     @map("team_number")
+  matchNumber      Int?     @map("match_number")
+  matchType        String?  @map("match_type")
+  scoutName        String?  @map("scout_name")
+  epaScore         Float?   @map("epa_score")
+  noShow           Boolean  @default(false) @map("no_show")
+  autoFuel         Int      @default(0) @map("auto_fuel")
+  teleFuel         Int      @default(0) @map("tele_fuel")
+  defenseRating    Int?     @map("defense_rating")
+  fouls            Int      @default(0)
+  generalComments  String?  @map("general_comments")
+  scrapedAt        DateTime @default(now()) @map("scraped_at")
+  importedToMain   Boolean  @default(false) @map("imported_to_main")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+  team  Team? @relation(fields: [teamNumber], references: [teamNumber], onDelete: SetNull)
+
+  @@unique([teamNumber, matchNumber, sourceTeam, eventKey])
+  @@index([teamNumber])
+  @@index([eventKey])
+  @@map("external_scout_imports")
+}

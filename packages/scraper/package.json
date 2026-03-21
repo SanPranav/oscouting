@@ -1,0 +1,14 @@
+{
+  "name": "@3749/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/scrape-2485.js",
+  "scripts": {
+    "build": "echo \"scraper build not required\""
+  },
+  "dependencies": {
+    "@3749/db": "*",
+    "cheerio": "^1.0.0"
+  }
+}

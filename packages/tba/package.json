@@ -1,0 +1,13 @@
+{
+  "name": "@3749/tba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/sync.js",
+  "scripts": {
+    "build": "echo \"tba build not required\""
+  },
+  "dependencies": {
+    "@3749/db": "*"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@3749/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "sh -c 'p=${PORT:-2540}; lsof -ti :$p | xargs -r kill -9'",
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "build": "echo \"server build not required\""
+  },
+  "dependencies": {
+    "@3749/ai": "*",
+    "@3749/db": "*",
+    "@3749/prediction": "*",
+    "@3749/scraper": "*",
+    "@3749/shared": "*",
+    "@3749/tba": "*",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
