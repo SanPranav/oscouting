@@ -71,6 +71,7 @@ async function fetchRowsFromApi() {
 
 export async function scrapeAndImport(eventKey, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+  const returnRows = options.returnRows !== false;
   const effectiveEventKey = eventKey || DEFAULT_GLOBAL_EVENT;
 
   onProgress?.({ phase: 'initializing', message: `Preparing scrape for ${effectiveEventKey}...` });
@@ -121,7 +122,8 @@ export async function scrapeAndImport(eventKey, options = {}) {
 
   onProgress?.({ phase: 'importing', totalRows: rows.length, processedRows: 0, importedRows: 0, message: `Importing 0/${rows.length} rows...` });
 
-  const imported = [];
+  const imported = returnRows ? [] : null;
+  let importedCount = 0;
   let processedRows = 0;
   for (const row of rows) {
     const teamNumber = toInt(pick(row, ['Team', 'team']) || row.__cells?.[1], 99999);
@@ -132,7 +134,7 @@ export async function scrapeAndImport(eventKey, options = {}) {
         phase: 'importing',
         totalRows: rows.length,
         processedRows,
-        importedRows: imported.length,
+        importedRows: importedCount,
         message: `Importing ${processedRows}/${rows.length} rows...`
       });
       continue;
@@ -153,11 +155,11 @@ export async function scrapeAndImport(eventKey, options = {}) {
       scoutName: row.ScoutName || null,
       epaScore: toFloat(row.EPA),
       noShow: toBool(row.noshow),
-      autoFuel: toInt(row.autofuel, 99),
-      teleFuel: toInt(row.telefuel, 200),
-      defenseRating: toInt(row.defense, 5),
-      fouls: toInt(row.fouls, 20),
-      generalComments: row.generalcomments || null,
+      autoFuel: toInt(pick(row, ['autofuel', 'auto_fuel', 'autoFuel', 'AUTO', 'Auto']) || row.__cells?.[5], 99),
+      teleFuel: toInt(pick(row, ['telefuel', 'tele_fuel', 'teleFuel', 'TELE', 'Tele', 'Teleop']) || row.__cells?.[6], 200),
+      defenseRating: toInt(pick(row, ['defense', 'Defense', 'defenseRating']) || row.__cells?.[37], 5),
+      fouls: toInt(pick(row, ['fouls', 'Fouls']) || row.__cells?.[34], 20),
+      generalComments: pick(row, ['generalcomments', 'generalComments', 'General Comments']) || null,
       importedToMain: false
     };
 
@@ -199,13 +201,14 @@ export async function scrapeAndImport(eventKey, options = {}) {
       create: normalizedPayload
     });
 
-    imported.push(upserted);
+    importedCount += 1;
+    if (returnRows) imported.push(upserted);
     processedRows += 1;
     onProgress?.({
       phase: 'importing',
       totalRows: rows.length,
       processedRows,
-      importedRows: imported.length,
+      importedRows: importedCount,
       message: `Importing ${processedRows}/${rows.length} rows...`
     });
   }
@@ -214,9 +217,17 @@ export async function scrapeAndImport(eventKey, options = {}) {
     phase: 'done',
     totalRows: rows.length,
     processedRows,
-    importedRows: imported.length,
-    message: `Imported ${imported.length}/${rows.length} rows.`
+    importedRows: importedCount,
+    message: `Imported ${importedCount}/${rows.length} rows.`
   });
+
+  if (!returnRows) {
+    return {
+      importedCount,
+      totalRows: rows.length,
+      eventKey: effectiveEventKey
+    };
+  }
 
   return imported;
 }

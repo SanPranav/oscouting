@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Database, FileUp, Upload } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -15,9 +15,17 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [predictionMessage, setPredictionMessage] = useState('');
+  const [teamSearch, setTeamSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState('Loading data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
+
+  const filteredRows = useMemo(() => {
+    const query = String(teamSearch || '').trim();
+    if (!query) return rows;
+
+    return rows.filter((row) => String(row.teamNumber || '').includes(query));
+  }, [rows, teamSearch]);
 
   const startLoading = (label = 'Loading data...') => {
     setLoading(true);
@@ -422,6 +430,12 @@ export default function App() {
             <Button variant="outline" onClick={scrapeAll}>Scrape All 2485</Button>
           </div>
 
+          <Input
+            value={teamSearch}
+            onChange={(e) => setTeamSearch(e.target.value)}
+            placeholder="Search team number (e.g. 3749)"
+          />
+
           <div className="space-y-2">
             <label className="text-sm text-muted-foreground">Paste schedule, flat schedule, component OPRs, scouting CSV, or offline tablet JSON</label>
             <textarea
@@ -480,6 +494,7 @@ export default function App() {
                 <TableHead>Defense</TableHead>
                 <TableHead>Cycle</TableHead>
                 <TableHead>Endgame</TableHead>
+                <TableHead>Trench/Bumper</TableHead>
                 <TableHead>Reliability</TableHead>
                 <TableHead>Disable%</TableHead>
                 <TableHead>Foul Rate</TableHead>
@@ -487,7 +502,7 @@ export default function App() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {filteredRows.map((row) => (
                 <TableRow key={`${row.eventKey}-${row.teamNumber}`}>
                   <TableCell>{row.teamNumber}</TableCell>
                   <TableCell>{row.matchesScouted}</TableCell>
@@ -500,6 +515,15 @@ export default function App() {
                   <TableCell>{Number(row.spiderDefense || 0).toFixed(1)}</TableCell>
                   <TableCell>{Number(row.spiderCycleSpeed || 0).toFixed(1)}</TableCell>
                   <TableCell>{Number(row.spiderEndgame || 0).toFixed(1)}</TableCell>
+                  <TableCell>
+                    {row.movementProfile === 'both'
+                      ? 'Both'
+                      : row.movementProfile === 'trench'
+                        ? 'Trench'
+                        : row.movementProfile === 'bumper'
+                          ? 'Bumper'
+                          : '—'}
+                  </TableCell>
                   <TableCell>{Number(row.spiderReliability || 0).toFixed(1)}</TableCell>
                   <TableCell>{(Number(row.disableRate || 0) * 100).toFixed(1)}</TableCell>
                   <TableCell>{Number(row.foulRate || 0).toFixed(2)}</TableCell>

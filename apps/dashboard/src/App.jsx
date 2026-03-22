@@ -62,6 +62,15 @@ function SpiderChart({ stat }) {
   );
 }
 
+function LoadingChip({ label }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-input bg-background px-2.5 py-1 text-xs text-muted-foreground">
+      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+      {label}
+    </span>
+  );
+}
+
 export default function App() {
   const [eventKey, setEventKey] = useState('2026casnd');
   const [matchKey, setMatchKey] = useState('2026casnd_qm5');
@@ -82,6 +91,12 @@ export default function App() {
   const [brickInput, setBrickInput] = useState('');
   const [brickLoading, setBrickLoading] = useState(false);
   const [brickTypingDots, setBrickTypingDots] = useState('.');
+  const [loadingCounts, setLoadingCounts] = useState({
+    teamPanels: 0,
+    schedule: 0,
+    leaderboard: 0,
+    scheduleImport: 0
+  });
   const [brickMessages, setBrickMessages] = useState([
     {
       role: 'assistant',
@@ -96,6 +111,22 @@ export default function App() {
     setPredictionProgress(95);
     return { response, data };
   };
+
+  const beginLoad = (key) => {
+    setLoadingCounts((prev) => ({
+      ...prev,
+      [key]: (prev[key] || 0) + 1
+    }));
+  };
+
+  const endLoad = (key) => {
+    setLoadingCounts((prev) => ({
+      ...prev,
+      [key]: Math.max(0, (prev[key] || 0) - 1)
+    }));
+  };
+
+  const isLoading = (key) => Number(loadingCounts[key] || 0) > 0;
 
   const runPrediction = async () => {
     try {
@@ -124,27 +155,42 @@ export default function App() {
   };
 
   const loadTeamPanels = async () => {
+    beginLoad('teamPanels');
     try {
       setError('');
-      const [detailRes, statusRes] = await Promise.all([
+      const [detailRes, statusRes, statsRes] = await Promise.all([
         fetch(`${API_BASE}/api/strategy/stats/${eventKey}/${teamNumber}`),
-        fetch(`${API_BASE}/api/strategy/robot-status/${eventKey}`)
+        fetch(`${API_BASE}/api/strategy/robot-status/${eventKey}`),
+        fetch(`${API_BASE}/api/strategy/stats/${eventKey}`)
       ]);
 
       const detail = await detailRes.json();
       const status = await statusRes.json();
+      const stats = await statsRes.json();
 
       if (!detailRes.ok) throw new Error(detail.error || 'Failed loading team detail');
       if (!statusRes.ok) throw new Error(status.error || 'Failed loading robot status');
+      if (!statsRes.ok) throw new Error(stats.error || 'Failed loading team stats');
 
-      setTeamDetail(detail);
+      const numericTeam = Number(teamNumber);
+      const matchingStat = Array.isArray(stats)
+        ? stats.find((row) => Number(row.teamNumber) === numericTeam)
+        : null;
+
+      setTeamDetail({
+        ...detail,
+        stat: matchingStat || detail?.stat || null
+      });
       setRobotStatus(Array.isArray(status) ? status : []);
     } catch (err) {
       setError(err.message || 'Failed loading dashboard panels');
+    } finally {
+      endLoad('teamPanels');
     }
   };
 
   const loadSchedule = async () => {
+    beginLoad('schedule');
     try {
       const response = await fetch(`${API_BASE}/api/strategy/schedule/${eventKey}?team=3749`);
       const data = await response.json();
@@ -155,10 +201,13 @@ export default function App() {
       setScheduleRows(Array.isArray(data) ? data : []);
     } catch {
       setError('Failed loading schedule');
+    } finally {
+      endLoad('schedule');
     }
   };
 
   const loadLeaderboard = async () => {
+    beginLoad('leaderboard');
     try {
       const response = await fetch(`${API_BASE}/api/strategy/leaderboard/${eventKey}?ourTeam=${teamNumber}&limit=12`);
       const data = await response.json();
@@ -170,10 +219,13 @@ export default function App() {
       setPickLeaderboard(Array.isArray(data.leaderboard) ? data.leaderboard : []);
     } catch {
       setError('Failed loading leaderboard');
+    } finally {
+      endLoad('leaderboard');
     }
   };
 
   const importScheduleFromPaste = async () => {
+    beginLoad('scheduleImport');
     try {
       setError('');
       setImportMessage('Importing schedule...');
@@ -204,6 +256,8 @@ export default function App() {
       await loadLeaderboard();
     } catch {
       setImportMessage('Schedule import failed. Server unreachable.');
+    } finally {
+      endLoad('scheduleImport');
     }
   };
 
@@ -325,6 +379,16 @@ export default function App() {
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+            {(predictionLoading || isLoading('teamPanels') || isLoading('schedule') || isLoading('leaderboard') || isLoading('scheduleImport')) ? (
+              <div className="flex flex-wrap gap-2">
+                {predictionLoading ? <LoadingChip label="Prediction" /> : null}
+                {isLoading('teamPanels') ? <LoadingChip label="Team Panels" /> : null}
+                {isLoading('schedule') ? <LoadingChip label="Schedule" /> : null}
+                {isLoading('leaderboard') ? <LoadingChip label="Leaderboard" /> : null}
+                {isLoading('scheduleImport') ? <LoadingChip label="Schedule Import" /> : null}
+              </div>
+            ) : null}
 
             {predictionLoading ? (
               <div className="space-y-1">
@@ -486,7 +550,10 @@ export default function App() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
+                      {isLoading('schedule') ? <LoadingChip label="Refreshing" /> : null}
+                    </div>
                     <CardDescription>Auto-refreshes every 30s for {eventKey}</CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -519,7 +586,10 @@ export default function App() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Pick Leaderboard</CardTitle>
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="text-base">Pick Leaderboard</CardTitle>
+                      {isLoading('leaderboard') ? <LoadingChip label="Refreshing" /> : null}
+                    </div>
                     <CardDescription>Best alliance partners ranked for Team {teamNumber} from live event stats</CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -559,19 +629,31 @@ export default function App() {
                 <div className="grid gap-6 lg:grid-cols-2">
                   <Card className="border-border/80 bg-card/90">
                     <CardHeader>
-                      <CardTitle className="text-base">Spider Chart · Team {teamNumber}</CardTitle>
+                      <div className="flex items-center justify-between gap-3">
+                        <CardTitle className="text-base">Spider Chart · Team {teamNumber}</CardTitle>
+                        {isLoading('teamPanels') ? <LoadingChip label="Refreshing" /> : null}
+                      </div>
                       <CardDescription>Auto, Teleop, Defense, Cycle, Reliability, Endgame</CardDescription>
                     </CardHeader>
                     <CardContent className="flex justify-center">
                       <div className="rounded-xl border border-border/80 bg-background/50 p-2">
-                        <SpiderChart stat={teamDetail?.stat} />
+                        {isLoading('teamPanels') && !teamDetail?.stat ? (
+                          <div className="flex h-64 w-64 items-center justify-center">
+                            <LoadingChip label="Loading chart" />
+                          </div>
+                        ) : (
+                          <SpiderChart stat={teamDetail?.stat} />
+                        )}
                       </div>
                     </CardContent>
                   </Card>
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Robot Status</CardTitle>
+                      <div className="flex items-center justify-between gap-3">
+                        <CardTitle className="text-base">Robot Status</CardTitle>
+                        {isLoading('teamPanels') ? <LoadingChip label="Refreshing" /> : null}
+                      </div>
                       <CardDescription>Disable/tip/foul trends from scouted reports</CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -618,6 +700,7 @@ export default function App() {
                       placeholder="Paste schedule CSV/JSON here"
                     />
                     <Button className="w-full" onClick={importScheduleFromPaste}>Import Schedule</Button>
+                    {isLoading('scheduleImport') ? <LoadingChip label="Importing" /> : null}
                     {importMessage ? <p className="text-xs text-muted-foreground">{importMessage}</p> : null}
                   </CardContent>
                 </Card>
