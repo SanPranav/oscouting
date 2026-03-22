@@ -295,7 +295,7 @@ router.get('/stats/:eventKey', async (req, res) => {
       : trenchUsed
         ? 'trench'
         : bumpUsed
-          ? 'bumper'
+          ? 'bump'
           : 'none';
 
     return {

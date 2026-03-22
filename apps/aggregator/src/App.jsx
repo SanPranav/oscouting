@@ -16,6 +16,7 @@ export default function App() {
   const [pasteText, setPasteText] = useState('');
   const [predictionMessage, setPredictionMessage] = useState('');
   const [teamSearch, setTeamSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [loading, setLoading] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState('Loading data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -40,6 +41,59 @@ export default function App() {
 
     return rows.filter((row) => exactTeams.has(String(row.teamNumber || '')));
   }, [rows, teamSearch]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortConfig.key) return filteredRows;
+
+    const movementOrder = { none: 0, trench: 1, bump: 2, both: 3 };
+    const getValue = (row, key) => {
+      switch (key) {
+        case 'teamNumber': return Number(row.teamNumber || 0);
+        case 'matchesScouted': return Number(row.matchesScouted || 0);
+        case 'epa': return Number(row.statbotics?.epa || 0);
+        case 'autoEPA': return Number(row.statbotics?.autoEPA || 0);
+        case 'teleopEPA': return Number(row.statbotics?.teleopEPA || 0);
+        case 'endgameEPA': return Number(row.statbotics?.endgameEPA || 0);
+        case 'spiderAuto': return Number(row.spiderAuto || 0);
+        case 'spiderTeleop': return Number(row.spiderTeleop || 0);
+        case 'spiderDefense': return Number(row.spiderDefense || 0);
+        case 'spiderCycleSpeed': return Number(row.spiderCycleSpeed || 0);
+        case 'spiderEndgame': return Number(row.spiderEndgame || 0);
+        case 'movementProfile': return movementOrder[String(row.movementProfile || 'none')] ?? 0;
+        case 'spiderReliability': return Number(row.spiderReliability || 0);
+        case 'disableRate': return Number(row.disableRate || 0);
+        case 'foulRate': return Number(row.foulRate || 0);
+        case 'climbSuccessRate': return Number(row.climbSuccessRate || 0);
+        default: return 0;
+      }
+    };
+
+    const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      const aValue = getValue(a, sortConfig.key);
+      const bValue = getValue(b, sortConfig.key);
+      if (aValue === bValue) return Number(a.teamNumber || 0) - Number(b.teamNumber || 0);
+      return (aValue - bValue) * directionMultiplier;
+    });
+  }, [filteredRows, sortConfig]);
+
+  const onSort = (key) => {
+    setSortConfig((current) => {
+      if (current.key === key) {
+        return {
+          key,
+          direction: current.direction === 'asc' ? 'desc' : 'asc'
+        };
+      }
+
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const sortArrow = (key) => {
+    if (sortConfig.key !== key) return '';
+    return sortConfig.direction === 'asc' ? '↑' : '↓';
+  };
 
   const startLoading = (label = 'Loading data...') => {
     setLoading(true);
@@ -497,26 +551,26 @@ export default function App() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Team</TableHead>
-                <TableHead>Matches</TableHead>
-                <TableHead>EPA</TableHead>
-                <TableHead>Auto EPA</TableHead>
-                <TableHead>Tele EPA</TableHead>
-                <TableHead>Endgame EPA</TableHead>
-                <TableHead>Auto</TableHead>
-                <TableHead>Teleop</TableHead>
-                <TableHead>Defense</TableHead>
-                <TableHead>Cycle</TableHead>
-                <TableHead>Endgame</TableHead>
-                <TableHead>Trench/Bumper</TableHead>
-                <TableHead>Reliability</TableHead>
-                <TableHead>Disable%</TableHead>
-                <TableHead>Foul Rate</TableHead>
-                <TableHead>Climb %</TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('teamNumber')}>Team <span>{sortArrow('teamNumber')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('matchesScouted')}>Matches <span>{sortArrow('matchesScouted')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('epa')}>EPA <span>{sortArrow('epa')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('autoEPA')}>Auto EPA <span>{sortArrow('autoEPA')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('teleopEPA')}>Tele EPA <span>{sortArrow('teleopEPA')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('endgameEPA')}>Endgame EPA <span>{sortArrow('endgameEPA')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderAuto')}>Auto <span>{sortArrow('spiderAuto')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderTeleop')}>Teleop <span>{sortArrow('spiderTeleop')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderDefense')}>Defense <span>{sortArrow('spiderDefense')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderCycleSpeed')}>Cycle <span>{sortArrow('spiderCycleSpeed')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderEndgame')}>Endgame <span>{sortArrow('spiderEndgame')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('movementProfile')}>Trench/Bump <span>{sortArrow('movementProfile')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderReliability')}>Reliability <span>{sortArrow('spiderReliability')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('disableRate')}>Disable% <span>{sortArrow('disableRate')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('foulRate')}>Foul Rate <span>{sortArrow('foulRate')}</span></button></TableHead>
+                <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('climbSuccessRate')}>Climb % <span>{sortArrow('climbSuccessRate')}</span></button></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredRows.map((row) => (
+              {sortedRows.map((row) => (
                 <TableRow key={`${row.eventKey}-${row.teamNumber}`}>
                   <TableCell>{row.teamNumber}</TableCell>
                   <TableCell>{row.matchesScouted}</TableCell>
@@ -534,8 +588,8 @@ export default function App() {
                       ? 'Both'
                       : row.movementProfile === 'trench'
                         ? 'Trench'
-                        : row.movementProfile === 'bumper'
-                          ? 'Bumper'
+                        : row.movementProfile === 'bump'
+                          ? 'Bump'
                           : '—'}
                   </TableCell>
                   <TableCell>{Number(row.spiderReliability || 0).toFixed(1)}</TableCell>
