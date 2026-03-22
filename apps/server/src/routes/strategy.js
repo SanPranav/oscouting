@@ -187,6 +187,16 @@ router.get('/schedule/:eventKey', async (req, res) => {
     orderBy: [{ compLevel: 'asc' }, { setNumber: 'asc' }, { matchNumber: 'asc' }]
   });
 
+  const reportProgressRows = await prisma.matchScoutingReport.findMany({
+    where: { eventKey, compLevel: 'qm', matchNumber: { not: null } },
+    select: { matchNumber: true }
+  });
+
+  const latestReportedQual = reportProgressRows.reduce((max, row) => {
+    const value = Number(row.matchNumber || 0);
+    return value > max ? value : max;
+  }, 0);
+
   const schedule = rows.map((row) => {
     const contains3749 = [row.redTeam1, row.redTeam2, row.redTeam3, row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(3749);
     const alliance3749 = [row.redTeam1, row.redTeam2, row.redTeam3].includes(3749)
@@ -194,6 +204,9 @@ router.get('/schedule/:eventKey', async (req, res) => {
       : [row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(3749)
         ? 'blue'
         : null;
+
+    const scoreCompleted = row.redScore !== null || row.blueScore !== null;
+    const reportCompleted = row.compLevel === 'qm' && latestReportedQual > 0 && row.matchNumber <= latestReportedQual;
 
     return {
       matchKey: row.matchKey,
@@ -204,10 +217,12 @@ router.get('/schedule/:eventKey', async (req, res) => {
       blueTeams: [row.blueTeam1, row.blueTeam2, row.blueTeam3].filter(Boolean),
       redScore: row.redScore,
       blueScore: row.blueScore,
-      status: row.redScore !== null || row.blueScore !== null ? 'completed' : 'scheduled',
+      status: scoreCompleted || reportCompleted ? 'completed' : 'scheduled',
+      statusSource: scoreCompleted ? 'score' : reportCompleted ? 'scouting_reports' : 'schedule',
       contains3749,
       alliance3749,
-      predictedTime: row.predictedTime
+      predictedTime: row.predictedTime,
+      latestReportedQual
     };
   });
 
