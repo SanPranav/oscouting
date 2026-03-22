@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '@3749/db/src/client.js';
 import { predictMatch } from '@3749/prediction/src/predict-match.js';
-import { callSmolLM } from '@3749/ai/src/lemonade-client.js';
+// import { callSmolLM } from '@3749/ai/src/lemonade-client.js';
 import { syncTbaEvent } from '@3749/tba/src/sync.js';
 import { recomputeExternalTeamStats } from '../stats.js';
 import { fetchStatboticsByTeams, fetchStatboticsTeamYear } from '../services/statbotics.js';
@@ -666,69 +666,15 @@ router.post('/brick-ai/:eventKey', async (req, res) => {
     ].join('\n');
   };
 
-  try {
-    const answer = await callSmolLM(
-      'You are Brick AI, an FRC scouting assistant for Team 3749. Answer using ONLY provided context. Be concise, tactical, and specific. If context is missing, say what is missing. Avoid markdown tables. Use short bullets. Return plain text only (never JSON, never braces).',
-      JSON.stringify({
-        eventKey,
-        dataScope: 'all-available-with-event-priority',
-        question,
-        mentionedTeams,
-        context
-      }),
-      false
-    );
-
-    let normalizedAnswer = String(answer || '').trim();
-    if (!normalizedAnswer || normalizedAnswer === '{}' || normalizedAnswer === '[]') {
-      const compactContext = context.slice(0, 10).map((entry) => ({
-        team: entry.teamNumber,
-        teleop: entry.spiderTeleop,
-        defense: entry.spiderDefense,
-        reliability: entry.spiderReliability,
-        avgFouls: entry.avgFouls,
-        disableRate: entry.disableRate,
-        notes: (entry.notes || []).slice(0, 2)
-      }));
-
-      const retryAnswer = await callSmolLM(
-        'You are Brick AI. Return plain text only: 2-4 tactical bullet points, no JSON, no braces.',
-        `Question: ${question}\nEvent: ${eventKey}\nTeams: ${JSON.stringify(compactContext)}`,
-        false
-      );
-
-      normalizedAnswer = String(retryAnswer || '').trim();
-    }
-
-    if (!normalizedAnswer || normalizedAnswer === '{}' || normalizedAnswer === '[]') {
-      res.json({
-        eventKey,
-        answer: fallbackBrickAnswer(),
-        teamsUsed: context.map((entry) => entry.teamNumber),
-        degraded: true,
-        dataScope: 'all-available-with-event-priority',
-        warning: 'Model returned empty or invalid tactical output'
-      });
-      return;
-    }
-
-    res.json({
-      eventKey,
-      answer: normalizedAnswer,
-      teamsUsed: context.map((entry) => entry.teamNumber),
-      degraded: false,
-      dataScope: 'all-available-with-event-priority'
-    });
-  } catch (error) {
-    res.json({
-      eventKey,
-      answer: fallbackBrickAnswer(),
-      teamsUsed: context.map((entry) => entry.teamNumber),
-      degraded: true,
-      dataScope: 'all-available-with-event-priority',
-      warning: error?.message || 'Brick AI model runtime unavailable'
-    });
-  }
+  // Temporarily disable Brick AI model calls to avoid local Lemonade runtime usage.
+  res.json({
+    eventKey,
+    answer: fallbackBrickAnswer(),
+    teamsUsed: context.map((entry) => entry.teamNumber),
+    degraded: true,
+    dataScope: 'all-available-with-event-priority',
+    warning: 'Brick AI temporarily disabled'
+  });
 });
 
 export default router;

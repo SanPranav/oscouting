@@ -1,5 +1,5 @@
 import { clamp, VALID_ALLIANCE, VALID_ENDGAME, toBool } from '@3749/shared/src/index.js';
-import { callSmolLM } from './lemonade-client.js';
+// import { callSmolLM } from './lemonade-client.js';
 
 const SYSTEM_PROMPT = `You are SCOUT-NORM, a precise FRC scouting data normalizer for Team 3749.
 Return JSON only.`;
@@ -35,8 +35,10 @@ function normalizeLocally(raw) {
 
 export async function normalizeMatchSubmission(raw) {
   try {
-    const ai = await callSmolLM(SYSTEM_PROMPT, JSON.stringify(raw), true);
-    const merged = { ...normalizeLocally(raw), ...ai };
+    // Temporarily disable Lemonade AI normalization to avoid local model runtime usage.
+    // const ai = await callSmolLM(SYSTEM_PROMPT, JSON.stringify(raw), true);
+    // const merged = { ...normalizeLocally(raw), ...ai };
+    const merged = normalizeLocally(raw);
 
     merged.teleop_defense_rating = clamp(Number(merged.teleop_defense_rating || 0), 0, 5);
     merged.teleop_speed_rating = clamp(Number(merged.teleop_speed_rating || 0), 0, 5);
