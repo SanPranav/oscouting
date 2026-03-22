@@ -69,8 +69,11 @@ async function fetchRowsFromApi() {
   }
 }
 
-export async function scrapeAndImport(eventKey) {
+export async function scrapeAndImport(eventKey, options = {}) {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const effectiveEventKey = eventKey || DEFAULT_GLOBAL_EVENT;
+
+  onProgress?.({ phase: 'initializing', message: `Preparing scrape for ${effectiveEventKey}...` });
 
   await prisma.event.upsert({
     where: { eventKey: effectiveEventKey },
@@ -79,8 +82,10 @@ export async function scrapeAndImport(eventKey) {
   });
 
   let rows = await fetchRowsFromApi();
+  onProgress?.({ phase: 'fetching', message: 'Fetching source rows...' });
 
   if (!rows.length) {
+    onProgress?.({ phase: 'fallback-html', message: 'API empty, scraping HTML table...' });
     const response = await fetch(SCRAPE_URL);
     if (!response.ok) throw new Error(`Scrape failed: ${response.status} from ${SCRAPE_URL}`);
     const html = await response.text();
@@ -110,14 +115,28 @@ export async function scrapeAndImport(eventKey) {
   }
 
   if (!rows.length) {
+    onProgress?.({ phase: 'done', totalRows: 0, processedRows: 0, importedRows: 0, message: 'No rows found to import.' });
     return [];
   }
 
+  onProgress?.({ phase: 'importing', totalRows: rows.length, processedRows: 0, importedRows: 0, message: `Importing 0/${rows.length} rows...` });
+
   const imported = [];
+  let processedRows = 0;
   for (const row of rows) {
     const teamNumber = toInt(pick(row, ['Team', 'team']) || row.__cells?.[1], 99999);
     const matchNumber = toInt(pick(row, ['Match', 'match']) || row.__cells?.[3], 999);
-    if (!teamNumber || !matchNumber) continue;
+    if (!teamNumber || !matchNumber) {
+      processedRows += 1;
+      onProgress?.({
+        phase: 'importing',
+        totalRows: rows.length,
+        processedRows,
+        importedRows: imported.length,
+        message: `Importing ${processedRows}/${rows.length} rows...`
+      });
+      continue;
+    }
 
     await prisma.team.upsert({
       where: { teamNumber },
@@ -181,7 +200,23 @@ export async function scrapeAndImport(eventKey) {
     });
 
     imported.push(upserted);
+    processedRows += 1;
+    onProgress?.({
+      phase: 'importing',
+      totalRows: rows.length,
+      processedRows,
+      importedRows: imported.length,
+      message: `Importing ${processedRows}/${rows.length} rows...`
+    });
   }
+
+  onProgress?.({
+    phase: 'done',
+    totalRows: rows.length,
+    processedRows,
+    importedRows: imported.length,
+    message: `Imported ${imported.length}/${rows.length} rows.`
+  });
 
   return imported;
 }

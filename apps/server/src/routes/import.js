@@ -20,9 +20,19 @@ const toRating = (value) => {
 
 const parseClimb = (value) => {
   const normalized = String(value ?? '').toLowerCase().trim();
-  if (['l3', 'level3', '3'].includes(normalized)) return 'level3';
-  if (['l2', 'level2', '2'].includes(normalized)) return 'level2';
-  if (['l1', 'level1', '1'].includes(normalized)) return 'level1';
+  if (!normalized) return 'none';
+
+  if (['l3', 'level3', '3', 'traverse', 'high'].includes(normalized)) return 'level3';
+  if (['l2', 'level2', '2', 'mid', 'middle'].includes(normalized)) return 'level2';
+  if (['l1', 'level1', '1', 'low', 'park', 'parked'].includes(normalized)) return 'level1';
+  if (['yes', 'y', 'true', 'climbed', 'hang', 'hung', 'successful'].includes(normalized)) return 'level1';
+  if (['no', 'n', 'false', 'none', 'did not climb', 'didnt climb'].includes(normalized)) return 'none';
+
+  if (normalized.includes('level 3') || normalized.includes('l3')) return 'level3';
+  if (normalized.includes('level 2') || normalized.includes('l2')) return 'level2';
+  if (normalized.includes('level 1') || normalized.includes('l1') || normalized.includes('park')) return 'level1';
+  if (normalized.includes('climb') || normalized.includes('hang')) return 'level1';
+
   return 'none';
 };
 
@@ -94,6 +104,11 @@ const parsePenaltyCount = (value) => {
   return found ? Number(found) : 0;
 };
 
+const parseNumericValue = (value) => {
+  const found = String(value ?? '').match(/-?\d+(?:\.\d+)?/)?.[0];
+  return found ? Number(found) : 0;
+};
+
 const UNKNOWN_VALUE = /^(idk|unknown|n\/?a|na|null|undefined|none)?$/i;
 
 function normalizeGeneralNotes(input) {
@@ -154,6 +169,49 @@ async function detectPasteType(headerLine, bodySample) {
   }
 }
 
+function extractEndgameResult(row) {
+  const explicit = parseClimb(get(row, [
+    'Climb',
+    'End Climb',
+    'Endgame',
+    'Endgame Result',
+    'Endgame Outcome',
+    'Climb Result',
+    'climb_result',
+    'endgame_result'
+  ]));
+  if (explicit !== 'none') return explicit;
+
+  const notesText = [
+    get(row, ['Additional Notes?', 'Notes', 'notes']),
+    get(row, ['Driving TEAM Behavior Elaborate', 'Elaborate.1']),
+    get(row, ['Addtional Cycle Notes', 'Additional Cycle Notes'])
+  ].join(' ').toLowerCase();
+
+  if (!notesText) return 'none';
+  if (notesText.includes('level 3') || notesText.includes('l3') || notesText.includes('traverse')) return 'level3';
+  if (notesText.includes('level 2') || notesText.includes('l2') || notesText.includes('mid climb')) return 'level2';
+  if (notesText.includes('level 1') || notesText.includes('l1') || notesText.includes('parked') || notesText.includes('park')) return 'level1';
+  if ((notesText.includes('climb') || notesText.includes('hang')) && !notesText.includes('no climb')) return 'level1';
+
+  return 'none';
+}
+
+function extractEndgameTowerPoints(row, endgameResult) {
+  const explicitPoints = parseNumericValue(get(row, [
+    'Endgame Points',
+    'Endgame Point',
+    'Endgame Score',
+    'Climb Points',
+    'endgame_points',
+    'endgame_tower_points'
+  ]));
+
+  if (explicitPoints > 0) return explicitPoints;
+
+  return endgameResult === 'level3' ? 30 : endgameResult === 'level2' ? 20 : endgameResult === 'level1' ? 15 : 0;
+}
+
 function mapScoutingRowToRaw(row, eventKey) {
   const matchNumber = extractMatchNumber(row);
   const teamNumber = extractTeamNumber(row);
@@ -162,6 +220,8 @@ function mapScoutingRowToRaw(row, eventKey) {
   const penaltiesRaw = get(row, ['Things they did wrong (penalties)', 'Penalties', 'fouls']);
   const allianceColorRaw = String(get(row, ['Alliance', 'Alliance Color', 'alliance_color', 'color'])).toLowerCase().trim();
   const allianceColor = allianceColorRaw === 'blue' ? 'blue' : 'red';
+  const endgameResult = extractEndgameResult(row);
+  const endgameTowerPoints = extractEndgameTowerPoints(row, endgameResult);
 
   const notes = [
     `start_pos=${get(row, ['Starting Position 1 left 3 right', 'Starting Position'])}`,
@@ -197,12 +257,13 @@ function mapScoutingRowToRaw(row, eventKey) {
     teleop_speed_rating: toRating(get(row, ['Driving Behaviour', 'Driving Behavior'])),
     teleop_crossed_bump: toBool(get(row, ['Using Bump?'])),
     teleop_crossed_trench: toBool(get(row, ['Using Trench?'])),
-    endgame_result: parseClimb(get(row, ['Climb', 'End Climb'])),
-    endgame_attempted_climb: parseClimb(get(row, ['Climb', 'End Climb'])) !== 'none',
+    endgame_result: endgameResult,
+    endgame_attempted_climb: endgameResult !== 'none',
+    endgame_tower_points: endgameTowerPoints,
     robot_disabled: false,
     robot_tipped: false,
     fouls_committed: parsePenaltyCount(penaltiesRaw),
-    general_notes: normalizeGeneralNotes(`${notes} | cycle_count=${cycleCount}`)
+    general_notes: normalizeGeneralNotes(`${notes} | cycle_count=${cycleCount} | endgame_points=${endgameTowerPoints}`)
   };
 }
 
@@ -243,10 +304,11 @@ async function importScoutingCsv(records, eventKey) {
           teleopCrossedTrench: normalized.teleop_crossed_trench,
           endgameResult: normalized.endgame_result,
           endgameAttemptedClimb: normalized.endgame_attempted_climb,
-          endgameTowerPoints:
-            normalized.endgame_result === 'level3' ? 30 :
-            normalized.endgame_result === 'level2' ? 20 :
-            normalized.endgame_result === 'level1' ? 15 : 0,
+          endgameTowerPoints: Number(raw.endgame_tower_points || 0) > 0
+            ? Number(raw.endgame_tower_points)
+            : normalized.endgame_result === 'level3' ? 30
+              : normalized.endgame_result === 'level2' ? 20
+                : normalized.endgame_result === 'level1' ? 15 : 0,
           robotDisabled: normalized.robot_disabled,
           robotTipped: normalized.robot_tipped,
           foulsCommitted: normalized.fouls_committed,

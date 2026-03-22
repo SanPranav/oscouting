@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Radar, Sparkles } from 'lucide-react';
+import { Bot, MessageCircle, Radar, Send, Sparkles, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Input } from './components/ui/input';
@@ -7,17 +7,23 @@ import { Badge } from './components/ui/badge';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
+const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
+
+function buildSpiderMetrics(stat) {
+  return [
+    Number(stat?.spiderAuto || 0),
+    Number(stat?.spiderTeleop || 0),
+    Number(stat?.spiderDefense || 0),
+    Number(stat?.spiderCycleSpeed || 0),
+    Number(stat?.spiderReliability || 0),
+    Number(stat?.spiderEndgame || 0)
+  ].map((value) => clamp(Number(value || 0)));
+}
+
 function SpiderChart({ stat }) {
   if (!stat) return null;
 
-  const metrics = [
-    Number(stat.spiderAuto || 0),
-    Number(stat.spiderTeleop || 0),
-    Number(stat.spiderDefense || 0),
-    Number(stat.spiderCycleSpeed || 0),
-    Number(stat.spiderReliability || 0),
-    Number(stat.spiderEndgame || 0)
-  ];
+  const metrics = buildSpiderMetrics(stat);
 
   const labels = ['Auto', 'Teleop', 'Defense', 'Cycle', 'Reliability', 'Endgame'];
   const cx = 120;
@@ -38,19 +44,20 @@ function SpiderChart({ stat }) {
     const ly = cy + Math.sin(angle) * (r + 20);
     return (
       <g key={label}>
-        <line x1={cx} y1={cy} x2={x} y2={y} stroke="currentColor" opacity="0.2" />
-        <text x={lx} y={ly} fontSize="11" textAnchor="middle" fill="currentColor" opacity="0.8">{label}</text>
+        <line x1={cx} y1={cy} x2={x} y2={y} stroke="currentColor" opacity="0.28" />
+        <text x={lx} y={ly} fontSize="11" textAnchor="middle" fill="currentColor" opacity="0.92">{label}</text>
       </g>
     );
   });
 
   return (
-    <svg viewBox="0 0 240 240" className="h-64 w-64 text-primary">
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" opacity="0.15" />
-      <circle cx={cx} cy={cy} r={r * 0.66} fill="none" stroke="currentColor" opacity="0.1" />
-      <circle cx={cx} cy={cy} r={r * 0.33} fill="none" stroke="currentColor" opacity="0.08" />
+    <svg viewBox="0 0 240 240" className="h-64 w-64 text-foreground">
+      <rect x="14" y="14" width="212" height="212" rx="12" fill="currentColor" opacity="0.04" />
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" opacity="0.36" />
+      <circle cx={cx} cy={cy} r={r * 0.66} fill="none" stroke="currentColor" opacity="0.24" />
+      <circle cx={cx} cy={cy} r={r * 0.33} fill="none" stroke="currentColor" opacity="0.16" />
       {axis}
-      <polygon points={points} fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" />
+      <polygon points={points} fill="currentColor" fillOpacity="0.28" stroke="currentColor" strokeWidth="2.4" />
     </svg>
   );
 }
@@ -67,21 +74,52 @@ export default function App() {
   const [schedulePasteText, setSchedulePasteText] = useState('');
   const [importMessage, setImportMessage] = useState('');
   const [error, setError] = useState('');
+  const [team3749Ready, setTeam3749Ready] = useState(true);
+  const [predictionLoading, setPredictionLoading] = useState(false);
+  const [predictionProgress, setPredictionProgress] = useState(0);
+  const [predictionLoadingLabel, setPredictionLoadingLabel] = useState('Loading prediction...');
+  const [brickOpen, setBrickOpen] = useState(false);
+  const [brickInput, setBrickInput] = useState('');
+  const [brickLoading, setBrickLoading] = useState(false);
+  const [brickTypingDots, setBrickTypingDots] = useState('.');
+  const [brickMessages, setBrickMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'Brick AI ready. Ask about team strengths, weaknesses, matchup plans, or reliability trends.'
+    }
+  ]);
+
+  const fetchJsonWithProgress = async (url, options = {}) => {
+    const response = await fetch(url, options);
+    setPredictionProgress(70);
+    const data = await response.json();
+    setPredictionProgress(95);
+    return { response, data };
+  };
 
   const runPrediction = async () => {
     try {
       setError('');
-      const response = await fetch(`${API_BASE}/api/strategy/predict/${eventKey}/${matchKey}`);
-      const data = await response.json();
+      setPredictionLoading(true);
+      setPredictionProgress(0);
+      setPredictionLoadingLabel('Generating match prediction...');
+
+      const { response, data } = await fetchJsonWithProgress(
+        `${API_BASE}/api/strategy/predict/${eventKey}/${matchKey}?team3749Ready=${team3749Ready}`
+      );
       if (!response.ok) {
         setError(data.error || 'Prediction failed');
         setResult(null);
         return;
       }
+      setPredictionProgress(100);
       setResult(data);
     } catch {
       setError('Server unreachable. Start backend on http://localhost:2540.');
       setResult(null);
+    } finally {
+      setPredictionLoading(false);
+      setPredictionProgress(0);
     }
   };
 
@@ -169,6 +207,66 @@ export default function App() {
     }
   };
 
+  const askBrickAi = async () => {
+    const question = brickInput.trim();
+    if (!question || brickLoading) return;
+
+    const userMessage = { role: 'user', text: question };
+    setBrickMessages((prev) => [...prev, userMessage]);
+    setBrickInput('');
+    setBrickLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/strategy/brick-ai/${eventKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, teamNumber })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setBrickMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: data.error || 'Brick AI request failed.' }
+        ]);
+        return;
+      }
+
+      const answerText = String(data.answer || 'No answer returned.');
+      const warningText = data.degraded && data.warning
+        ? `\n\n(Using fallback mode: ${data.warning})`
+        : '';
+
+      setBrickMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `${answerText}${warningText}` }
+      ]);
+    } catch {
+      setBrickMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Brick AI is unavailable right now. Check server + model runtime.' }
+      ]);
+    } finally {
+      setBrickLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!brickLoading) {
+      setBrickTypingDots('.');
+      return;
+    }
+
+    const frames = ['.', '..', '...'];
+    let idx = 0;
+    const interval = setInterval(() => {
+      idx = (idx + 1) % frames.length;
+      setBrickTypingDots(frames[idx]);
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [brickLoading]);
+
   useEffect(() => {
     loadSchedule();
     loadLeaderboard();
@@ -181,12 +279,12 @@ export default function App() {
   }, [eventKey, teamNumber]);
 
   return (
-    <main className="mx-auto min-h-screen max-w-[1440px] p-6 lg:p-8">
-      <div className="space-y-6">
+    <main className="mx-auto min-h-screen max-w-[1500px] p-6 lg:p-8">
+      <div className="space-y-8 pb-28">
         <Card>
           <CardHeader className="pb-4">
             <div className="mb-2 flex items-center gap-2">
-              <Radar className="h-5 w-5 text-primary" />
+              <Radar className="h-5 w-5 text-foreground" />
               <Badge>Drive Dashboard</Badge>
             </div>
             <CardTitle>Match Prediction</CardTitle>
@@ -198,14 +296,52 @@ export default function App() {
               <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match id (5, qm5, or 2026casnd_qm5)" />
               <Input value={teamNumber} onChange={(e) => setTeamNumber(e.target.value)} placeholder="team for spider/status" />
               <div className="flex gap-2">
-                <Button className="w-full gap-2" onClick={runPrediction}><Sparkles className="h-4 w-4" />Predict Match</Button>
+                <Button className="w-full gap-2" onClick={runPrediction} disabled={predictionLoading}>
+                  <Sparkles className="h-4 w-4" />
+                  {predictionLoading ? 'Predicting...' : 'Predict Match'}
+                </Button>
                 <Button variant="outline" className="w-full" onClick={loadTeamPanels}>Load Panels</Button>
               </div>
             </div>
 
+            <div className="rounded-md border border-input p-3">
+              <p className="mb-2 text-sm font-medium">Team 3749 Status</p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={team3749Ready}
+                onClick={() => setTeam3749Ready((current) => !current)}
+                className={`inline-flex h-6 w-12 items-center rounded-full transition-colors ${team3749Ready ? 'bg-primary' : 'bg-muted'}`}
+              >
+                <span
+                  className={`h-5 w-5 rounded-full bg-background shadow transition-transform ${team3749Ready ? 'translate-x-6' : 'translate-x-1'}`}
+                />
+              </button>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {team3749Ready
+                  ? 'TRUE: prioritize balanced offense + selective defense.'
+                  : 'FALSE: prioritize defensive disruption and low-risk cycles.'}
+              </p>
+            </div>
+
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+            {predictionLoading ? (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{predictionLoadingLabel}</span>
+                  <span>{Math.round(predictionProgress)}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary transition-all duration-150"
+                    style={{ width: `${predictionProgress}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_340px]">
               <section className="space-y-6">
                 {result ? (
                   <Card className="border-primary/40">
@@ -251,6 +387,99 @@ export default function App() {
                         </div>
                       ) : null}
                       <p className="text-muted-foreground">{result.narrative}</p>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                {result?.tacticalPlan ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Drive-Team Tactical Strategy</CardTitle>
+                      <CardDescription>Concise calls for 2026 Reefscape: mobility, lane denial, endgame conversion.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4 text-sm">
+                      <div className="flex items-center justify-between rounded-md border border-input p-2">
+                        <p className="text-xs text-muted-foreground">Strategy Mode</p>
+                        <Badge className="border border-input bg-background text-foreground">{result.tacticalPlan.mode || 'balanced'}</Badge>
+                      </div>
+
+                      {result.tacticalPlan.primaryThreat ? (
+                        <div className="rounded-md border border-input p-3">
+                          <p className="font-semibold">Primary Threat · Team {result.tacticalPlan.primaryThreat.teamNumber}</p>
+                          <p className="text-muted-foreground">{result.tacticalPlan.primaryThreat.reason}</p>
+                          <div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
+                            <p>Threat: <span className="font-semibold">{result.tacticalPlan.primaryThreat.threatLevel}</span></p>
+                            <p>Teleop: <span className="font-semibold">{result.tacticalPlan.primaryThreat.stats.teleopScore}</span></p>
+                            <p>Endgame: <span className="font-semibold">{result.tacticalPlan.primaryThreat.stats.endgameScore}</span></p>
+                            <p>Cycle: <span className="font-semibold">{result.tacticalPlan.primaryThreat.stats.cycleSpeed || 'N/A'}</span></p>
+                            <p>EPA: <span className="font-semibold">{result.tacticalPlan.primaryThreat.stats.statboticsEPA || '0.00'}</span></p>
+                            <p>Window: <span className="font-semibold">{result.tacticalPlan.primaryThreat.stats.exploitable}</span></p>
+                          </div>
+                          {Array.isArray(result.tacticalPlan.primaryThreat.habits) && result.tacticalPlan.primaryThreat.habits.length ? (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium">Opponent Habits</p>
+                              <ul className="list-disc pl-5 text-xs text-muted-foreground">
+                                {result.tacticalPlan.primaryThreat.habits.map((habit) => (
+                                  <li key={habit}>{habit}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="rounded-md border border-input p-3">
+                        <p className="font-medium">Auto Call</p>
+                        <p className="text-muted-foreground">{result.tacticalPlan.autoRecommendation}</p>
+                      </div>
+
+                      {Array.isArray(result.tacticalPlan.offensePlan) && result.tacticalPlan.offensePlan.length ? (
+                        <div className="rounded-md border border-input p-3">
+                          <p className="font-medium">Shooting and Cycle Plan</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.tacticalPlan.offensePlan.map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(result.tacticalPlan.defensePlan) && result.tacticalPlan.defensePlan.length ? (
+                        <div className="rounded-md border border-input p-3">
+                          <p className="font-medium">Defense Plan</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.tacticalPlan.defensePlan.map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(result.tacticalPlan.habitCounters) && result.tacticalPlan.habitCounters.length ? (
+                        <div className="rounded-md border border-input p-3">
+                          <p className="font-medium">Habit Counters</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.tacticalPlan.habitCounters.map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(result.tacticalPlan.concisePlan) && result.tacticalPlan.concisePlan.length ? (
+                        <div className="rounded-md border border-input p-3">
+                          <p className="font-medium">Quick Calls</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.tacticalPlan.concisePlan.slice(0, 4).map((line) => (
+                              <li key={line}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {result.tacticalPlan.summary ? (
+                        <p className="rounded-md border border-input p-3 font-medium">{result.tacticalPlan.summary}</p>
+                      ) : null}
                     </CardContent>
                   </Card>
                 ) : null}
@@ -328,13 +557,15 @@ export default function App() {
                 </Card>
 
                 <div className="grid gap-6 lg:grid-cols-2">
-                  <Card>
+                  <Card className="border-border/80 bg-card/90">
                     <CardHeader>
                       <CardTitle className="text-base">Spider Chart · Team {teamNumber}</CardTitle>
                       <CardDescription>Auto, Teleop, Defense, Cycle, Reliability, Endgame</CardDescription>
                     </CardHeader>
                     <CardContent className="flex justify-center">
-                      <SpiderChart stat={teamDetail?.stat} />
+                      <div className="rounded-xl border border-border/80 bg-background/50 p-2">
+                        <SpiderChart stat={teamDetail?.stat} />
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -395,6 +626,71 @@ export default function App() {
           </CardContent>
         </Card>
       </div>
+
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end">
+        {brickOpen ? (
+          <Card className="mb-2 w-[min(92vw,380px)] border-border/80 bg-card/95 shadow-xl backdrop-blur">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-foreground" />
+                  <CardTitle className="text-sm">Brick AI</CardTitle>
+                </div>
+                <Badge className="border border-input bg-background text-xs text-muted-foreground">Assistant</Badge>
+              </div>
+              <CardDescription>Ask team and matchup questions for {eventKey}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="max-h-64 space-y-2 overflow-auto rounded-md border border-input bg-background/50 p-2">
+                {brickMessages.map((message, index) => (
+                  <div
+                    key={`${message.role}-${index}`}
+                    className={`rounded-md p-2 text-xs ${message.role === 'user' ? 'bg-accent text-accent-foreground' : 'bg-card text-foreground'}`}
+                  >
+                    <p className="mb-1 font-semibold">{message.role === 'user' ? 'You' : 'Brick AI'}</p>
+                    <p className="whitespace-pre-wrap text-muted-foreground">{message.text}</p>
+                  </div>
+                ))}
+                {brickLoading ? (
+                  <div className="rounded-md bg-card p-2 text-xs text-foreground">
+                    <p className="mb-1 font-semibold">Brick AI</p>
+                    <p className="text-muted-foreground">Brick is typing{brickTypingDots}</p>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={brickInput}
+                  onChange={(e) => setBrickInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      askBrickAi();
+                    }
+                  }}
+                  placeholder="Ask about teams, defense, reliability..."
+                />
+                <Button className="gap-1" onClick={askBrickAi} disabled={brickLoading}>
+                  <Send className="h-4 w-4" />
+                  {brickLoading ? '...' : 'Send'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <Button
+          className="gap-2 rounded-full border border-input bg-card px-4 shadow-xl hover:bg-accent"
+          onClick={() => setBrickOpen((open) => !open)}
+        >
+          {brickOpen ? <X className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
+          {brickOpen ? 'Close Brick AI' : 'Brick AI'}
+        </Button>
+      </div>
+
+      <footer className="mt-10 pb-3 text-center text-xs text-muted-foreground">
+        Made by SanPranav © 2026
+      </footer>
     </main>
   );
 }

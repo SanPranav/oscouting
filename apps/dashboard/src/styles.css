@@ -1,7 +1,7 @@
-body { font-family: Arial, sans-serif; margin: 0; background: #020617; color: #e2e8f0; }
+body { font-family: Arial, sans-serif; margin: 0; background: #060b16; color: #e2e8f0; }
 .container { max-width: 900px; margin: 0 auto; padding: 24px; }
 .controls { display: flex; gap: 10px; }
-input, button { padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
-button { cursor: pointer; background: #7c3aed; border: none; }
-.card { margin-top: 16px; padding: 16px; border-radius: 12px; background: #111827; border: 1px solid #1f2937; }
+input, button { padding: 10px; border-radius: 8px; border: 1px solid #245a67; background: #0b1624; color: #e2e8f0; }
+button { cursor: pointer; background: #22d3ee; color: #001018; border: none; }
+.card { margin-top: 16px; padding: 16px; border-radius: 12px; background: #0f1a2a; border: 1px solid #1f4f5e; }
 .error { color: #f87171; }

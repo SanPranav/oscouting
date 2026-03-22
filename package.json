@@ -20,7 +20,9 @@
     "db:seed": "npm --workspace @3749/db run seed",
     "sync-tba": "node scripts/sync-tba.js",
     "run-ai": "node scripts/run-ai.js",
-    "ai:serve": "lemonade server --port 8080",
+    "ai:serve": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} serve --port 8080 --host localhost --no-tray'",
+    "ai:status": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} status'",
+    "ai:stop": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} stop'",
     "scrape": "node scripts/scrape-2485.js",
     "import-csv": "node scripts/import-csv.js",
     "export-csv": "node scripts/export-csv.js"
