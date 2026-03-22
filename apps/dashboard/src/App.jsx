@@ -64,6 +64,8 @@ export default function App() {
   const [robotStatus, setRobotStatus] = useState([]);
   const [scheduleRows, setScheduleRows] = useState([]);
   const [pickLeaderboard, setPickLeaderboard] = useState([]);
+  const [schedulePasteText, setSchedulePasteText] = useState('');
+  const [importMessage, setImportMessage] = useState('');
   const [error, setError] = useState('');
 
   const runPrediction = async () => {
@@ -133,6 +135,40 @@ export default function App() {
     }
   };
 
+  const importScheduleFromPaste = async () => {
+    try {
+      setError('');
+      setImportMessage('Importing schedule...');
+      const response = await fetch(`${API_BASE}/api/import/paste`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventKey, text: schedulePasteText, type: 'auto' })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setImportMessage(data.error || 'Schedule import failed');
+        return;
+      }
+
+      const resolvedEventKey = data.eventKey || eventKey;
+      if (resolvedEventKey !== eventKey) {
+        setEventKey(resolvedEventKey);
+      }
+
+      if (data.importedMatches !== undefined) {
+        setImportMessage(`Imported ${data.importedMatches} matches into ${resolvedEventKey}`);
+      } else {
+        setImportMessage(`Import complete for ${resolvedEventKey}`);
+      }
+
+      await loadSchedule();
+      await loadLeaderboard();
+    } catch {
+      setImportMessage('Schedule import failed. Server unreachable.');
+    }
+  };
+
   useEffect(() => {
     loadSchedule();
     loadLeaderboard();
@@ -145,191 +181,220 @@ export default function App() {
   }, [eventKey, teamNumber]);
 
   return (
-    <main className="mx-auto min-h-screen max-w-5xl space-y-6 p-6">
-      <Card>
-        <CardHeader>
-          <div className="mb-2 flex items-center gap-2">
-            <Radar className="h-5 w-5 text-primary" />
-            <Badge>Drive Dashboard</Badge>
-          </div>
-          <CardTitle>Match Prediction</CardTitle>
-          <CardDescription>Use local scouting stats plus AI narrative for strategy calls.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Input value={eventKey} onChange={(e) => setEventKey(e.target.value)} placeholder="event key" />
-            <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match id (5, qm5, or 2026casnd_qm5)" />
-            <Button className="gap-2" onClick={runPrediction}><Sparkles className="h-4 w-4" />Predict Match</Button>
-            <Input value={teamNumber} onChange={(e) => setTeamNumber(e.target.value)} placeholder="team for spider/status" />
-          </div>
-          <Button variant="outline" onClick={loadTeamPanels}>Load Spider + Robot Status</Button>
-
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-          {result ? (
-            <Card className="border-primary/40">
-              <CardHeader>
-                <CardTitle className="text-base">{result.matchKey}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p>Red: <span className="font-semibold">{result.redPredicted}</span> | Blue: <span className="font-semibold">{result.bluePredicted}</span></p>
-                <p>Confidence: {result.confidence}</p>
-                {result.dataQuality ? (
-                  <div className="rounded-md border border-input p-2 text-xs text-muted-foreground">
-                    <p>
-                      Data quality · Red points coverage: <span className="font-semibold">{result.dataQuality.red?.pointsCoveragePct ?? 0}%</span>
-                      {' '}| Blue points coverage: <span className="font-semibold">{result.dataQuality.blue?.pointsCoveragePct ?? 0}%</span>
-                    </p>
-                    <p>
-                      Team sources:{' '}
-                      {(result.dataQuality.byTeam || [])
-                        .map((entry) => `${entry.teamNumber}:${entry.source}`)
-                        .join(', ')}
-                    </p>
-                  </div>
-                ) : null}
-                {result.team3749Playing ? <p>3749 alliance: <span className="font-semibold">{result.ourAlliance}</span></p> : <p className="font-semibold">3749 is not playing.</p>}
-                {Array.isArray(result.opponentWeaknesses) && result.opponentWeaknesses.length ? (
-                  <div>
-                    <p className="font-medium">Opponent Weaknesses</p>
-                    <ul className="list-disc pl-5 text-muted-foreground">
-                      {result.opponentWeaknesses.slice(0, 5).map((weakness) => (
-                        <li key={weakness}>{weakness}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {Array.isArray(result.opponentStrengths) && result.opponentStrengths.length ? (
-                  <div>
-                    <p className="font-medium">Opponent Strengths</p>
-                    <ul className="list-disc pl-5 text-muted-foreground">
-                      {result.opponentStrengths.slice(0, 4).map((strength) => (
-                        <li key={strength}>{strength}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                <p className="text-muted-foreground">{result.narrative}</p>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
-              <CardDescription>Auto-refreshes every 30s for {eventKey}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-72 overflow-auto rounded-md border border-input">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-input text-left text-muted-foreground">
-                      <th className="p-2">Match</th>
-                      <th className="p-2">3749</th>
-                      <th className="p-2">Red</th>
-                      <th className="p-2">Blue</th>
-                      <th className="p-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scheduleRows.map((row) => (
-                      <tr key={row.matchKey} className="border-b border-input/50">
-                        <td className="p-2">{row.matchKey}</td>
-                        <td className="p-2">{row.alliance3749 || 'N/A'}</td>
-                        <td className="p-2">{(row.redTeams || []).join(', ')}</td>
-                        <td className="p-2">{(row.blueTeams || []).join(', ')}</td>
-                        <td className="p-2">{row.status}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+    <main className="mx-auto min-h-screen max-w-[1440px] p-6 lg:p-8">
+      <div className="space-y-6">
+        <Card>
+          <CardHeader className="pb-4">
+            <div className="mb-2 flex items-center gap-2">
+              <Radar className="h-5 w-5 text-primary" />
+              <Badge>Drive Dashboard</Badge>
+            </div>
+            <CardTitle>Match Prediction</CardTitle>
+            <CardDescription>Use local scouting stats plus AI narrative for strategy calls.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <Input value={eventKey} onChange={(e) => setEventKey(e.target.value)} placeholder="event key" />
+              <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match id (5, qm5, or 2026casnd_qm5)" />
+              <Input value={teamNumber} onChange={(e) => setTeamNumber(e.target.value)} placeholder="team for spider/status" />
+              <div className="flex gap-2">
+                <Button className="w-full gap-2" onClick={runPrediction}><Sparkles className="h-4 w-4" />Predict Match</Button>
+                <Button variant="outline" className="w-full" onClick={loadTeamPanels}>Load Panels</Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Pick Leaderboard</CardTitle>
-              <CardDescription>Best alliance partners ranked for Team {teamNumber} from live event stats</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-80 overflow-auto rounded-md border border-input">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-input text-left text-muted-foreground">
-                      <th className="p-2">Rank</th>
-                      <th className="p-2">Team</th>
-                      <th className="p-2">Pick Score</th>
-                      <th className="p-2">Capability</th>
-                      <th className="p-2">Durability</th>
-                      <th className="p-2">Fit</th>
-                      <th className="p-2">Tags</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pickLeaderboard.map((row) => (
-                      <tr key={row.teamNumber} className="border-b border-input/50">
-                        <td className="p-2">{row.rank}</td>
-                        <td className="p-2">{row.teamNumber}</td>
-                        <td className="p-2 font-semibold">{Number(row.pickScore || 0).toFixed(1)}</td>
-                        <td className="p-2">{Number(row.capabilityScore || 0).toFixed(1)}</td>
-                        <td className="p-2">{Number(row.durabilityScore || 0).toFixed(1)}</td>
-                        <td className="p-2">{Number(row.fitScore || 0).toFixed(1)}</td>
-                        <td className="p-2">{Array.isArray(row.tags) && row.tags.length ? row.tags.join(', ') : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Spider Chart · Team {teamNumber}</CardTitle>
-                <CardDescription>Auto, Teleop, Defense, Cycle, Reliability, Endgame</CardDescription>
-              </CardHeader>
-              <CardContent className="flex justify-center">
-                <SpiderChart stat={teamDetail?.stat} />
-              </CardContent>
-            </Card>
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <section className="space-y-6">
+                {result ? (
+                  <Card className="border-primary/40">
+                    <CardHeader>
+                      <CardTitle className="text-base">{result.matchKey}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <p>Red: <span className="font-semibold">{result.redPredicted}</span> | Blue: <span className="font-semibold">{result.bluePredicted}</span></p>
+                      <p>Confidence: {result.confidence}</p>
+                      {result.dataQuality ? (
+                        <div className="rounded-md border border-input p-2 text-xs text-muted-foreground">
+                          <p>
+                            Data quality · Red points coverage: <span className="font-semibold">{result.dataQuality.red?.pointsCoveragePct ?? 0}%</span>
+                            {' '}| Blue points coverage: <span className="font-semibold">{result.dataQuality.blue?.pointsCoveragePct ?? 0}%</span>
+                          </p>
+                          <p>
+                            Team sources:{' '}
+                            {(result.dataQuality.byTeam || [])
+                              .map((entry) => `${entry.teamNumber}:${entry.source}`)
+                              .join(', ')}
+                          </p>
+                        </div>
+                      ) : null}
+                      {result.team3749Playing ? <p>3749 alliance: <span className="font-semibold">{result.ourAlliance}</span></p> : <p className="font-semibold">3749 is not playing.</p>}
+                      {Array.isArray(result.opponentWeaknesses) && result.opponentWeaknesses.length ? (
+                        <div>
+                          <p className="font-medium">Opponent Weaknesses</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.opponentWeaknesses.slice(0, 5).map((weakness) => (
+                              <li key={weakness}>{weakness}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {Array.isArray(result.opponentStrengths) && result.opponentStrengths.length ? (
+                        <div>
+                          <p className="font-medium">Opponent Strengths</p>
+                          <ul className="list-disc pl-5 text-muted-foreground">
+                            {result.opponentStrengths.slice(0, 4).map((strength) => (
+                              <li key={strength}>{strength}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      <p className="text-muted-foreground">{result.narrative}</p>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Robot Status</CardTitle>
-                <CardDescription>Disable/tip/foul trends from scouted reports</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="max-h-64 overflow-auto rounded-md border border-input">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-input text-left text-muted-foreground">
-                        <th className="p-2">Team</th>
-                        <th className="p-2">Disable%</th>
-                        <th className="p-2">Tip%</th>
-                        <th className="p-2">Avg Fouls</th>
-                        <th className="p-2">Last Climb</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {robotStatus.map((row) => (
-                        <tr key={row.teamNumber} className="border-b border-input/50">
-                          <td className="p-2">{row.teamNumber}</td>
-                          <td className="p-2">{(Number(row.disableRate || 0) * 100).toFixed(1)}</td>
-                          <td className="p-2">{(Number(row.tipRate || 0) * 100).toFixed(1)}</td>
-                          <td className="p-2">{Number(row.avgFouls || 0).toFixed(2)}</td>
-                          <td className="p-2">{row.lastEndgame}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
+                    <CardDescription>Auto-refreshes every 30s for {eventKey}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="max-h-80 overflow-auto rounded-md border border-input">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-input text-left text-muted-foreground">
+                            <th className="p-2">Match</th>
+                            <th className="p-2">3749</th>
+                            <th className="p-2">Red</th>
+                            <th className="p-2">Blue</th>
+                            <th className="p-2">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scheduleRows.map((row) => (
+                            <tr key={row.matchKey} className="border-b border-input/50 align-top">
+                              <td className="p-2">{row.matchKey}</td>
+                              <td className="p-2">{row.alliance3749 || 'N/A'}</td>
+                              <td className="p-2">{(row.redTeams || []).join(', ')}</td>
+                              <td className="p-2">{(row.blueTeams || []).join(', ')}</td>
+                              <td className="p-2">{row.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Pick Leaderboard</CardTitle>
+                    <CardDescription>Best alliance partners ranked for Team {teamNumber} from live event stats</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="max-h-96 overflow-auto rounded-md border border-input">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-input text-left text-muted-foreground">
+                            <th className="p-2">Rank</th>
+                            <th className="p-2">Team</th>
+                            <th className="p-2">Pick Score</th>
+                            <th className="p-2">Capability</th>
+                            <th className="p-2">Durability</th>
+                            <th className="p-2">Fit</th>
+                            <th className="p-2">Strongest Value</th>
+                            <th className="p-2">Tags</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pickLeaderboard.map((row) => (
+                            <tr key={row.teamNumber} className="border-b border-input/50 align-top">
+                              <td className="p-2">{row.rank}</td>
+                              <td className="p-2">{row.teamNumber}</td>
+                              <td className="p-2 font-semibold">{Number(row.pickScore || 0).toFixed(1)}</td>
+                              <td className="p-2">{Number(row.capabilityScore || 0).toFixed(1)}</td>
+                              <td className="p-2">{Number(row.durabilityScore || 0).toFixed(1)}</td>
+                              <td className="p-2">{Number(row.fitScore || 0).toFixed(1)}</td>
+                              <td className="p-2">{row.strongestValue || 'Balanced profile'}</td>
+                              <td className="p-2">{Array.isArray(row.tags) && row.tags.length ? row.tags.join(', ') : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Spider Chart · Team {teamNumber}</CardTitle>
+                      <CardDescription>Auto, Teleop, Defense, Cycle, Reliability, Endgame</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex justify-center">
+                      <SpiderChart stat={teamDetail?.stat} />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Robot Status</CardTitle>
+                      <CardDescription>Disable/tip/foul trends from scouted reports</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="max-h-72 overflow-auto rounded-md border border-input">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-input text-left text-muted-foreground">
+                              <th className="p-2">Team</th>
+                              <th className="p-2">Disable%</th>
+                              <th className="p-2">Tip%</th>
+                              <th className="p-2">Avg Fouls</th>
+                              <th className="p-2">Last Climb</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {robotStatus.map((row) => (
+                              <tr key={row.teamNumber} className="border-b border-input/50">
+                                <td className="p-2">{row.teamNumber}</td>
+                                <td className="p-2">{(Number(row.disableRate || 0) * 100).toFixed(1)}</td>
+                                <td className="p-2">{(Number(row.tipRate || 0) * 100).toFixed(1)}</td>
+                                <td className="p-2">{Number(row.avgFouls || 0).toFixed(2)}</td>
+                                <td className="p-2">{row.lastEndgame}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        </CardContent>
-      </Card>
+              </section>
+
+              <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Schedule Import</CardTitle>
+                    <CardDescription>Paste schedule CSV/JSON here. Event key auto-updates when detected.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <textarea
+                      className="min-h-64 w-full rounded-md border border-input bg-background p-3 text-sm"
+                      value={schedulePasteText}
+                      onChange={(e) => setSchedulePasteText(e.target.value)}
+                      placeholder="Paste schedule CSV/JSON here"
+                    />
+                    <Button className="w-full" onClick={importScheduleFromPaste}>Import Schedule</Button>
+                    {importMessage ? <p className="text-xs text-muted-foreground">{importMessage}</p> : null}
+                  </CardContent>
+                </Card>
+              </aside>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

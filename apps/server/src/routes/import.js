@@ -478,6 +478,21 @@ function extractScheduleList(parsed) {
         : [];
 }
 
+function inferEventKeyFromCsvRecords(records, fallbackEventKey) {
+  if (!Array.isArray(records) || !records.length) return fallbackEventKey;
+
+  for (const row of records) {
+    const direct = String(row.event_key || row.eventKey || '').trim();
+    if (direct) return direct;
+
+    const mk = row.match_key || row.matchKey;
+    const fromKey = inferEventKeyFromMatchKey(mk);
+    if (fromKey) return fromKey;
+  }
+
+  return fallbackEventKey;
+}
+
 function parseScheduleJsonData(parsed, eventKey) {
   const list = extractScheduleList(parsed);
 
@@ -618,13 +633,15 @@ router.post('/paste', async (req, res) => {
     if (!records.length) return res.status(400).json({ error: 'No rows parsed from text' });
 
     if (resolvedType === 'schedule') {
-      const result = await importSchedule(records, eventKey);
-      return res.json({ ...result, eventKey });
+      const resolvedEventKey = inferEventKeyFromCsvRecords(records, eventKey);
+      const result = await importSchedule(records, resolvedEventKey);
+      return res.json({ ...result, eventKey: resolvedEventKey });
     }
 
     if (resolvedType === 'flat_schedule') {
-      const result = await importFlatSchedule(records, eventKey);
-      return res.json({ ...result, eventKey });
+      const resolvedEventKey = inferEventKeyFromCsvRecords(records, eventKey);
+      const result = await importFlatSchedule(records, resolvedEventKey);
+      return res.json({ ...result, eventKey: resolvedEventKey });
     }
 
     if (resolvedType === 'oprs') {
