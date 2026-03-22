@@ -24,7 +24,21 @@ export default function App() {
     const query = String(teamSearch || '').trim();
     if (!query) return rows;
 
-    return rows.filter((row) => String(row.teamNumber || '').includes(query));
+    const tokens = query
+      .split(/[\s,]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (!tokens.length) return rows;
+
+    if (tokens.length === 1) {
+      return rows.filter((row) => String(row.teamNumber || '').includes(tokens[0]));
+    }
+
+    const exactTeams = new Set(tokens.map((value) => String(Number.parseInt(value, 10))).filter((value) => value !== 'NaN'));
+    if (!exactTeams.size) return [];
+
+    return rows.filter((row) => exactTeams.has(String(row.teamNumber || '')));
   }, [rows, teamSearch]);
 
   const startLoading = (label = 'Loading data...') => {
@@ -433,7 +447,7 @@ export default function App() {
           <Input
             value={teamSearch}
             onChange={(e) => setTeamSearch(e.target.value)}
-            placeholder="Search team number (e.g. 3749)"
+            placeholder="Search team(s): 3749 or 3749, 254, 1678"
           />
 
           <div className="space-y-2">
