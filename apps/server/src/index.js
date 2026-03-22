@@ -46,9 +46,9 @@ app.post('/api/sync/tba/:eventKey', async (req, res) => {
 
 app.post('/api/sync/scrape/:eventKey', async (req, res) => {
   try {
-    const data = await scrapeAndImport(req.params.eventKey);
+    const data = await scrapeAndImport(req.params.eventKey, { returnRows: false });
     const aggregatedTeams = await recomputeExternalTeamStats(req.params.eventKey);
-    res.json({ count: data.length, aggregatedTeams });
+    res.json({ count: data.importedCount, aggregatedTeams });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -56,10 +56,10 @@ app.post('/api/sync/scrape/:eventKey', async (req, res) => {
 
 app.post('/api/sync/scrape-all', async (_req, res) => {
   try {
-    const data = await scrapeAndImport();
+    const data = await scrapeAndImport(undefined, { returnRows: false });
     const eventKey = '2485_all';
     const aggregatedTeams = await recomputeExternalTeamStats(eventKey);
-    res.json({ count: data.length, eventKey, aggregatedTeams });
+    res.json({ count: data.importedCount, eventKey, aggregatedTeams });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -72,6 +72,7 @@ app.post('/api/sync/scrape/:eventKey/job', async (req, res) => {
   void (async () => {
     try {
       const imported = await scrapeAndImport(eventKey, {
+        returnRows: false,
         onProgress: (progress) => {
           updateScrapeJob(job.id, {
             stage: progress.phase || 'importing',
@@ -91,10 +92,10 @@ app.post('/api/sync/scrape/:eventKey/job', async (req, res) => {
       const aggregatedTeams = await recomputeExternalTeamStats(eventKey);
       finishScrapeJob(job.id, {
         stage: 'done',
-        message: `Imported ${imported.length} rows`,
-        totalRows: Math.max(imported.length, getScrapeJob(job.id)?.totalRows || 0),
-        processedRows: getScrapeJob(job.id)?.processedRows || imported.length,
-        importedRows: imported.length,
+        message: `Imported ${imported.importedCount} rows`,
+        totalRows: Math.max(imported.totalRows || imported.importedCount, getScrapeJob(job.id)?.totalRows || 0),
+        processedRows: getScrapeJob(job.id)?.processedRows || imported.totalRows || imported.importedCount,
+        importedRows: imported.importedCount,
         aggregatedTeams
       });
     } catch (error) {
@@ -112,6 +113,7 @@ app.post('/api/sync/scrape-all/job', async (_req, res) => {
   void (async () => {
     try {
       const imported = await scrapeAndImport(undefined, {
+        returnRows: false,
         onProgress: (progress) => {
           updateScrapeJob(job.id, {
             stage: progress.phase || 'importing',
@@ -131,10 +133,10 @@ app.post('/api/sync/scrape-all/job', async (_req, res) => {
       const aggregatedTeams = await recomputeExternalTeamStats(eventKey);
       finishScrapeJob(job.id, {
         stage: 'done',
-        message: `Global scrape imported ${imported.length} rows`,
-        totalRows: Math.max(imported.length, getScrapeJob(job.id)?.totalRows || 0),
-        processedRows: getScrapeJob(job.id)?.processedRows || imported.length,
-        importedRows: imported.length,
+        message: `Global scrape imported ${imported.importedCount} rows`,
+        totalRows: Math.max(imported.totalRows || imported.importedCount, getScrapeJob(job.id)?.totalRows || 0),
+        processedRows: getScrapeJob(job.id)?.processedRows || imported.totalRows || imported.importedCount,
+        importedRows: imported.importedCount,
         aggregatedTeams
       });
     } catch (error) {

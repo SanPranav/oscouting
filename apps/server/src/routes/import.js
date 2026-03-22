@@ -217,6 +217,25 @@ function mapScoutingRowToRaw(row, eventKey) {
   const teamNumber = extractTeamNumber(row);
   const crossing = String(get(row, ['Did they cross center line for auto?', 'Auto Mobility', 'Cross Line Auto', 'Crossed Line Auto'])).toLowerCase().trim();
   const cycleCount = extractInteger(get(row, ['How many cycles', 'Cycles', 'cycle_count', 'Cycle Count'])) || 0;
+  const autoFuelAuto = Math.max(0, Math.min(99, Math.round(parseNumericValue(get(row, [
+    'AUTO',
+    'Auto',
+    'Auto Fuel',
+    'Auto Fuel Scored',
+    'auto_fuel',
+    'autoFuel',
+    'auto_fuel_auto'
+  ])))));
+  const teleopFuelScored = Math.max(0, Math.min(200, Math.round(parseNumericValue(get(row, [
+    'TELE',
+    'Tele',
+    'Teleop',
+    'Teleop Fuel',
+    'Tele Fuel',
+    'tele_fuel',
+    'teleFuel',
+    'teleop_fuel_scored'
+  ])))));
   const penaltiesRaw = get(row, ['Things they did wrong (penalties)', 'Penalties', 'fouls']);
   const allianceColorRaw = String(get(row, ['Alliance', 'Alliance Color', 'alliance_color', 'color'])).toLowerCase().trim();
   const allianceColor = allianceColorRaw === 'blue' ? 'blue' : 'red';
@@ -246,12 +265,12 @@ function mapScoutingRowToRaw(row, eventKey) {
     team_number: teamNumber,
     match_number: matchNumber,
     alliance_color: allianceColor,
-    auto_fuel_auto: 0,
+    auto_fuel_auto: autoFuelAuto,
     auto_fuel_missed: 0,
     auto_tower_climb: parseClimb(get(row, ['Auto Climb'])) === 'none' ? 0 : 1,
     auto_mobility: crossing !== 'no',
     auto_hub_shift_won: false,
-    teleop_fuel_scored: 0,
+    teleop_fuel_scored: teleopFuelScored,
     teleop_fuel_missed: 0,
     teleop_defense_rating: toRating(get(row, ['Driving TEAM Behavior', 'Driving Team Behavior'])),
     teleop_speed_rating: toRating(get(row, ['Driving Behaviour', 'Driving Behavior'])),

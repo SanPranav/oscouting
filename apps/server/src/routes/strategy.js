@@ -181,6 +181,8 @@ function computePickLeaderboard(statsRows, ourTeam, context) {
 }
 
 router.get('/stats/:eventKey', async (req, res) => {
+  const eventKey = req.params.eventKey;
+
   let data = await prisma.teamAggregatedStat.findMany({
     where: { eventKey: req.params.eventKey },
     orderBy: [{ spiderReliability: 'desc' }, { teamNumber: 'asc' }]
@@ -194,13 +196,116 @@ router.get('/stats/:eventKey', async (req, res) => {
     });
   }
 
-  const teams = data.map((row) => row.teamNumber);
-  const statboticsByTeam = await fetchStatboticsByTeams(teams);
+  const externalAggRows = await prisma.externalScoutImport.groupBy({
+    by: ['teamNumber'],
+    where: { eventKey, teamNumber: { not: null } },
+    _count: { teamNumber: true },
+    _avg: {
+      autoFuel: true,
+      teleFuel: true,
+      defenseRating: true,
+      fouls: true
+    }
+  });
 
-  const enriched = data.map((row) => {
-    const sb = statboticsByTeam.get(row.teamNumber);
+  const externalAggByTeam = new Map(
+    externalAggRows
+      .filter((row) => Number.isFinite(Number(row.teamNumber)))
+      .map((row) => [
+        Number(row.teamNumber),
+        {
+          matchesScouted: Number(row._count.teamNumber || 0),
+          autoAvg: Number(row._avg.autoFuel || 0),
+          teleAvg: Number(row._avg.teleFuel || 0),
+          defenseAvg: Number(row._avg.defenseRating || 0),
+          foulRate: Number(row._avg.fouls || 0)
+        }
+      ])
+  );
+
+  const mergedData = data.map((row) => {
+    const external = externalAggByTeam.get(row.teamNumber);
+    if (!external) return row;
+
+    const currentAuto = Number(row.avgAutoTotalPoints || 0);
+    const currentTele = Number(row.avgTeleopTotalPoints || 0);
+    const shouldUseExternal = currentAuto === 0 && currentTele === 0 && (external.autoAvg > 0 || external.teleAvg > 0);
+    if (!shouldUseExternal) return row;
+
+    const autoAvg = external.autoAvg;
+    const teleAvg = external.teleAvg;
+    const defenseAvg = external.defenseAvg;
+    const foulRate = external.foulRate;
+
     return {
       ...row,
+      matchesScouted: Math.max(Number(row.matchesScouted || 0), external.matchesScouted),
+      avgAutoTotalPoints: autoAvg,
+      avgTeleopTotalPoints: teleAvg,
+      spiderAuto: clamp(autoAvg * 5, 0, 100),
+      spiderTeleop: clamp(teleAvg * 3, 0, 100),
+      spiderDefense: defenseAvg > 0 ? clamp((defenseAvg / 5) * 100, 0, 100) : row.spiderDefense,
+      foulRate: foulRate > 0 ? foulRate : row.foulRate,
+      spiderReliability: clamp(
+        ((1 - Number(row.disableRate || 0)) * 0.7 + (1 - clamp((foulRate > 0 ? foulRate : Number(row.foulRate || 0)) / 3, 0, 1)) * 0.3) * 100,
+        0,
+        100
+      )
+    };
+  });
+
+  const movementRows = await prisma.matchScoutingReport.findMany({
+    where: { eventKey },
+    select: {
+      teamNumber: true,
+      teleopCrossedBump: true,
+      teleopCrossedTrench: true
+    }
+  });
+
+  const movementByTeam = new Map();
+  for (const row of movementRows) {
+    const teamNumber = Number(row.teamNumber);
+    if (!teamNumber) continue;
+
+    if (!movementByTeam.has(teamNumber)) {
+      movementByTeam.set(teamNumber, {
+        total: 0,
+        bumpCrosses: 0,
+        trenchCrosses: 0
+      });
+    }
+
+    const agg = movementByTeam.get(teamNumber);
+    agg.total += 1;
+    if (row.teleopCrossedBump) agg.bumpCrosses += 1;
+    if (row.teleopCrossedTrench) agg.trenchCrosses += 1;
+  }
+
+  const teams = mergedData.map((row) => row.teamNumber);
+  const statboticsByTeam = await fetchStatboticsByTeams(teams);
+
+  const enriched = mergedData.map((row) => {
+    const sb = statboticsByTeam.get(row.teamNumber);
+    const movement = movementByTeam.get(row.teamNumber);
+    const bumpUsed = Boolean(movement && movement.bumpCrosses > 0);
+    const trenchUsed = Boolean(movement && movement.trenchCrosses > 0);
+    const movementProfile = trenchUsed && bumpUsed
+      ? 'both'
+      : trenchUsed
+        ? 'trench'
+        : bumpUsed
+          ? 'bumper'
+          : 'none';
+
+    return {
+      ...row,
+      movementProfile,
+      trenchUsed,
+      bumpUsed,
+      movementSampleSize: movement ? movement.total : 0,
+      trenchCrossCount: movement ? movement.trenchCrosses : 0,
+      bumpCrossCount: movement ? movement.bumpCrosses : 0,
       statbotics: sb
         ? {
             epa: Number(sb.epa.toFixed(2)),
@@ -235,10 +340,114 @@ router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
     take: 8
   });
 
+  const reportAgg = await prisma.matchScoutingReport.aggregate({
+    where: { eventKey, teamNumber },
+    _count: { _all: true },
+    _avg: {
+      autoFuelAuto: true,
+      teleopFuelScored: true,
+      endgameTowerPoints: true,
+      teleopDefenseRating: true,
+      foulsCommitted: true
+    }
+  });
+
+  const externalAgg = await prisma.externalScoutImport.aggregate({
+    where: { eventKey, teamNumber },
+    _count: { _all: true },
+    _avg: {
+      autoFuel: true,
+      teleFuel: true,
+      defenseRating: true,
+      fouls: true
+    }
+  });
+
+  const reportCount = Number(reportAgg?._count?._all || 0);
+  const externalCount = Number(externalAgg?._count?._all || 0);
+
+  const reportAuto = Number(reportAgg?._avg?.autoFuelAuto || 0);
+  const reportTele = Number(reportAgg?._avg?.teleopFuelScored || 0);
+  const reportEnd = Number(reportAgg?._avg?.endgameTowerPoints || 0);
+
+  const externalAuto = Number(externalAgg?._avg?.autoFuel || 0);
+  const externalTele = Number(externalAgg?._avg?.teleFuel || 0);
+
+  const fallbackAuto = reportCount > 0 ? reportAuto : externalAuto;
+  const fallbackTele = reportCount > 0 ? reportTele : externalTele;
+  const fallbackEnd = reportCount > 0 ? reportEnd : 0;
+
+  const fallbackDefense = reportCount > 0
+    ? Number(reportAgg?._avg?.teleopDefenseRating || 0)
+    : Number(externalAgg?._avg?.defenseRating || 0);
+
+  const fallbackFoulRate = reportCount > 0
+    ? Number(reportAgg?._avg?.foulsCommitted || 0)
+    : Number(externalAgg?._avg?.fouls || 0);
+
+  const fallbackMatches = Math.max(reportCount, externalCount);
+
+  const statForResponse = (() => {
+    const base = stat
+      ? { ...stat }
+      : {
+          eventKey,
+          teamNumber,
+          matchesScouted: 0,
+          avgAutoTotalPoints: 0,
+          avgTeleopTotalPoints: 0,
+          avgEndgamePoints: 0,
+          climbAttemptRate: 0,
+          climbSuccessRate: 0,
+          disableRate: 0,
+          foulRate: 0,
+          spiderAuto: 0,
+          spiderTeleop: 0,
+          spiderDefense: 0,
+          spiderCycleSpeed: 0,
+          spiderReliability: 0,
+          spiderEndgame: 0,
+          lastComputed: new Date(0)
+        };
+
+    const hasFallback = fallbackAuto > 0 || fallbackTele > 0 || fallbackEnd > 0;
+    if (!hasFallback) return stat;
+
+    const existingAuto = Number(base.avgAutoTotalPoints || 0);
+    const existingTele = Number(base.avgTeleopTotalPoints || 0);
+    const existingEnd = Number(base.avgEndgamePoints || 0);
+
+    const finalAuto = existingAuto > 0 ? existingAuto : fallbackAuto;
+    const finalTele = existingTele > 0 ? existingTele : fallbackTele;
+    const finalEnd = existingEnd > 0 ? existingEnd : fallbackEnd;
+
+    return {
+      ...base,
+      matchesScouted: Math.max(Number(base.matchesScouted || 0), fallbackMatches),
+      avgAutoTotalPoints: finalAuto,
+      avgTeleopTotalPoints: finalTele,
+      avgEndgamePoints: finalEnd,
+      foulRate: Number(base.foulRate || 0) > 0 ? base.foulRate : fallbackFoulRate,
+      spiderAuto: Number(base.spiderAuto || 0) > 0 ? base.spiderAuto : clamp(finalAuto * 5, 0, 100),
+      spiderTeleop: Number(base.spiderTeleop || 0) > 0 ? base.spiderTeleop : clamp(finalTele * 3, 0, 100),
+      spiderEndgame: Number(base.spiderEndgame || 0) > 0 ? base.spiderEndgame : clamp((finalEnd / 30) * 100, 0, 100),
+      spiderDefense: Number(base.spiderDefense || 0) > 0
+        ? base.spiderDefense
+        : (fallbackDefense > 0 ? clamp((fallbackDefense / 5) * 100, 0, 100) : base.spiderDefense),
+      spiderReliability: Number(base.spiderReliability || 0) > 0
+        ? base.spiderReliability
+        : clamp(
+            ((1 - Number(base.disableRate || 0)) * 0.7 + (1 - clamp((fallbackFoulRate > 0 ? fallbackFoulRate : Number(base.foulRate || 0)) / 3, 0, 1)) * 0.3) * 100,
+            0,
+            100
+          )
+    };
+  })();
+
   const statbotics = await fetchStatboticsTeamYear(teamNumber);
 
   res.json({
-    stat,
+    stat: statForResponse,
     recent,
     statbotics: statbotics
       ? {
