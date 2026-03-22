@@ -16,6 +16,25 @@ export default function App() {
   const [pasteText, setPasteText] = useState('');
   const [predictionMessage, setPredictionMessage] = useState('');
 
+  const formatImportResultMessage = (data, sourceLabel = 'Import') => {
+    if (data.imported !== undefined) {
+      const headErrors = Array.isArray(data.errors)
+        ? data.errors.slice(0, 3).map((entry) => `row ${entry.row}: ${entry.error}`).join(' | ')
+        : '';
+      const errorPart = data.errors?.length
+        ? ` (${data.errors.length} row errors${headErrors ? `; ${headErrors}` : ''})`
+        : '';
+      return `${sourceLabel}: Imported ${data.imported} scouting rows${errorPart}`;
+    }
+    if (data.importedMatches !== undefined) {
+      return `${sourceLabel}: Imported ${data.importedMatches} matches from ${data.type}`;
+    }
+    if (data.importedTeams !== undefined) {
+      return `${sourceLabel}: Imported ${data.importedTeams} team OPR rows`;
+    }
+    return `${sourceLabel}: Import completed`;
+  };
+
   const load = async () => {
     try {
       const response = await fetch(`${API_BASE}/api/strategy/stats/${eventKey}`);
@@ -67,19 +86,49 @@ export default function App() {
         return;
       }
 
-      if (data.imported !== undefined) {
-        setMessage(`Imported ${data.imported} scouting rows${data.errors?.length ? ` (${data.errors.length} row errors)` : ''}`);
-      } else if (data.importedMatches !== undefined) {
-        setMessage(`Imported ${data.importedMatches} matches from ${data.type}`);
-      } else if (data.importedTeams !== undefined) {
-        setMessage(`Imported ${data.importedTeams} team OPR rows`);
-      } else {
-        setMessage('Import completed');
+      if (data.eventKey && data.eventKey !== eventKey) {
+        setEventKey(data.eventKey);
       }
+
+      setMessage(formatImportResultMessage(data, 'Paste'));
 
       await load();
     } catch {
       setMessage('Server unreachable. Start backend on http://localhost:2540.');
+    }
+  };
+
+  const importCsvFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setPasteText(text);
+
+      setMessage(`Importing CSV file: ${file.name}...`);
+      const response = await fetch(`${API_BASE}/api/import/paste`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventKey, text, type: 'auto' })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(data.error || 'CSV file import failed');
+        return;
+      }
+
+      if (data.eventKey && data.eventKey !== eventKey) {
+        setEventKey(data.eventKey);
+      }
+
+      setMessage(formatImportResultMessage(data, `CSV ${file.name}`));
+      await load();
+    } catch {
+      setMessage('Could not read CSV file.');
+    } finally {
+      event.target.value = '';
     }
   };
 
@@ -96,6 +145,10 @@ export default function App() {
       if (!response.ok) {
         setPredictionMessage(imported.error || 'Import failed before prediction');
         return;
+      }
+
+      if (imported.eventKey && imported.eventKey !== eventKey) {
+        setEventKey(imported.eventKey);
       }
 
       const predictResponse = await fetch(`${API_BASE}/api/strategy/predict/${eventKey}/${matchKey}`);
@@ -135,6 +188,10 @@ export default function App() {
         return;
       }
 
+      if (data.eventKey && data.eventKey !== eventKey) {
+        setEventKey(data.eventKey);
+      }
+
       setMessage(`Imported ${data.imported} offline tablet reports`);
       await load();
     } catch {
@@ -168,6 +225,10 @@ export default function App() {
         return;
       }
 
+      if (data.eventKey && data.eventKey !== eventKey) {
+        setEventKey(data.eventKey);
+      }
+
       setMessage(`Imported ${data.imported} offline tablet reports from ${file.name}`);
       await load();
     } catch {
@@ -190,7 +251,7 @@ export default function App() {
             <Badge>Aggregator</Badge>
           </div>
           <CardTitle>Event Aggregation Console</CardTitle>
-          <CardDescription>Paste your match schedule (CSV) in the box below and click AI Import Paste. You can also paste flat schedule, OPRs, scouting CSV, or offline tablet JSON.</CardDescription>
+          <CardDescription>Paste CSV or JSON in the box below and click AI Import Paste. Auto-detect supports schedule, flat schedule, OPRs, scouting CSV, and offline tablet batch JSON across competitions.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -215,6 +276,11 @@ export default function App() {
               <Button variant="outline" onClick={importOfflineBatch}>Import Offline Tablet Batch</Button>
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-input px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground">
                 <FileUp className="h-4 w-4" />
+                Import CSV File
+                <input type="file" accept=".csv,text/csv" className="hidden" onChange={importCsvFile} />
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-input px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground">
+                <FileUp className="h-4 w-4" />
                 Import Offline JSON File
                 <input type="file" accept="application/json,.json" className="hidden" onChange={importOfflineFile} />
               </label>
@@ -232,7 +298,13 @@ export default function App() {
                 <TableHead>Matches</TableHead>
                 <TableHead>Auto</TableHead>
                 <TableHead>Teleop</TableHead>
+                <TableHead>Defense</TableHead>
+                <TableHead>Cycle</TableHead>
+                <TableHead>Endgame</TableHead>
                 <TableHead>Reliability</TableHead>
+                <TableHead>Disable%</TableHead>
+                <TableHead>Foul Rate</TableHead>
+                <TableHead>Climb %</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -242,7 +314,13 @@ export default function App() {
                   <TableCell>{row.matchesScouted}</TableCell>
                   <TableCell>{Number(row.spiderAuto || 0).toFixed(1)}</TableCell>
                   <TableCell>{Number(row.spiderTeleop || 0).toFixed(1)}</TableCell>
+                  <TableCell>{Number(row.spiderDefense || 0).toFixed(1)}</TableCell>
+                  <TableCell>{Number(row.spiderCycleSpeed || 0).toFixed(1)}</TableCell>
+                  <TableCell>{Number(row.spiderEndgame || 0).toFixed(1)}</TableCell>
                   <TableCell>{Number(row.spiderReliability || 0).toFixed(1)}</TableCell>
+                  <TableCell>{(Number(row.disableRate || 0) * 100).toFixed(1)}</TableCell>
+                  <TableCell>{Number(row.foulRate || 0).toFixed(2)}</TableCell>
+                  <TableCell>{(Number(row.climbSuccessRate || 0) * 100).toFixed(1)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

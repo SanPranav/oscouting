@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Radar, Sparkles } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -62,6 +62,8 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [teamDetail, setTeamDetail] = useState(null);
   const [robotStatus, setRobotStatus] = useState([]);
+  const [scheduleRows, setScheduleRows] = useState([]);
+  const [pickLeaderboard, setPickLeaderboard] = useState([]);
   const [error, setError] = useState('');
 
   const runPrediction = async () => {
@@ -102,6 +104,46 @@ export default function App() {
     }
   };
 
+  const loadSchedule = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/strategy/schedule/${eventKey}?team=3749`);
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error || 'Failed loading schedule');
+        return;
+      }
+      setScheduleRows(Array.isArray(data) ? data : []);
+    } catch {
+      setError('Failed loading schedule');
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/strategy/leaderboard/${eventKey}?ourTeam=${teamNumber}&limit=12`);
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error || 'Failed loading leaderboard');
+        return;
+      }
+
+      setPickLeaderboard(Array.isArray(data.leaderboard) ? data.leaderboard : []);
+    } catch {
+      setError('Failed loading leaderboard');
+    }
+  };
+
+  useEffect(() => {
+    loadSchedule();
+    loadLeaderboard();
+    const timer = setInterval(loadSchedule, 30000);
+    const leaderboardTimer = setInterval(loadLeaderboard, 30000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(leaderboardTimer);
+    };
+  }, [eventKey, teamNumber]);
+
   return (
     <main className="mx-auto min-h-screen max-w-5xl space-y-6 p-6">
       <Card>
@@ -132,10 +174,115 @@ export default function App() {
               <CardContent className="space-y-2 text-sm">
                 <p>Red: <span className="font-semibold">{result.redPredicted}</span> | Blue: <span className="font-semibold">{result.bluePredicted}</span></p>
                 <p>Confidence: {result.confidence}</p>
+                {result.dataQuality ? (
+                  <div className="rounded-md border border-input p-2 text-xs text-muted-foreground">
+                    <p>
+                      Data quality · Red points coverage: <span className="font-semibold">{result.dataQuality.red?.pointsCoveragePct ?? 0}%</span>
+                      {' '}| Blue points coverage: <span className="font-semibold">{result.dataQuality.blue?.pointsCoveragePct ?? 0}%</span>
+                    </p>
+                    <p>
+                      Team sources:{' '}
+                      {(result.dataQuality.byTeam || [])
+                        .map((entry) => `${entry.teamNumber}:${entry.source}`)
+                        .join(', ')}
+                    </p>
+                  </div>
+                ) : null}
+                {result.team3749Playing ? <p>3749 alliance: <span className="font-semibold">{result.ourAlliance}</span></p> : <p className="font-semibold">3749 is not playing.</p>}
+                {Array.isArray(result.opponentWeaknesses) && result.opponentWeaknesses.length ? (
+                  <div>
+                    <p className="font-medium">Opponent Weaknesses</p>
+                    <ul className="list-disc pl-5 text-muted-foreground">
+                      {result.opponentWeaknesses.slice(0, 5).map((weakness) => (
+                        <li key={weakness}>{weakness}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {Array.isArray(result.opponentStrengths) && result.opponentStrengths.length ? (
+                  <div>
+                    <p className="font-medium">Opponent Strengths</p>
+                    <ul className="list-disc pl-5 text-muted-foreground">
+                      {result.opponentStrengths.slice(0, 4).map((strength) => (
+                        <li key={strength}>{strength}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 <p className="text-muted-foreground">{result.narrative}</p>
               </CardContent>
             </Card>
           ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
+              <CardDescription>Auto-refreshes every 30s for {eventKey}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="max-h-72 overflow-auto rounded-md border border-input">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-input text-left text-muted-foreground">
+                      <th className="p-2">Match</th>
+                      <th className="p-2">3749</th>
+                      <th className="p-2">Red</th>
+                      <th className="p-2">Blue</th>
+                      <th className="p-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scheduleRows.map((row) => (
+                      <tr key={row.matchKey} className="border-b border-input/50">
+                        <td className="p-2">{row.matchKey}</td>
+                        <td className="p-2">{row.alliance3749 || 'N/A'}</td>
+                        <td className="p-2">{(row.redTeams || []).join(', ')}</td>
+                        <td className="p-2">{(row.blueTeams || []).join(', ')}</td>
+                        <td className="p-2">{row.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Pick Leaderboard</CardTitle>
+              <CardDescription>Best alliance partners ranked for Team {teamNumber} from live event stats</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="max-h-80 overflow-auto rounded-md border border-input">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-input text-left text-muted-foreground">
+                      <th className="p-2">Rank</th>
+                      <th className="p-2">Team</th>
+                      <th className="p-2">Pick Score</th>
+                      <th className="p-2">Capability</th>
+                      <th className="p-2">Durability</th>
+                      <th className="p-2">Fit</th>
+                      <th className="p-2">Tags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pickLeaderboard.map((row) => (
+                      <tr key={row.teamNumber} className="border-b border-input/50">
+                        <td className="p-2">{row.rank}</td>
+                        <td className="p-2">{row.teamNumber}</td>
+                        <td className="p-2 font-semibold">{Number(row.pickScore || 0).toFixed(1)}</td>
+                        <td className="p-2">{Number(row.capabilityScore || 0).toFixed(1)}</td>
+                        <td className="p-2">{Number(row.durabilityScore || 0).toFixed(1)}</td>
+                        <td className="p-2">{Number(row.fitScore || 0).toFixed(1)}</td>
+                        <td className="p-2">{Array.isArray(row.tags) && row.tags.length ? row.tags.join(', ') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>

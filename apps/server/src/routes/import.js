@@ -26,17 +26,97 @@ const parseClimb = (value) => {
   return 'none';
 };
 
+const normalizeHeaderKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
 const get = (row, aliases) => {
+  const normalized = new Map();
+  for (const [key, value] of Object.entries(row || {})) {
+    normalized.set(normalizeHeaderKey(key), value);
+  }
+
   for (const key of aliases) {
     if (row[key] !== undefined) return row[key];
+    const byNormalized = normalized.get(normalizeHeaderKey(key));
+    if (byNormalized !== undefined) return byNormalized;
   }
+
   return '';
+};
+
+const extractInteger = (value) => {
+  const direct = Number.parseInt(String(value ?? '').trim(), 10);
+  if (Number.isFinite(direct)) return direct;
+
+  const text = String(value ?? '').toLowerCase();
+  const qm = text.match(/(?:^|[^a-z])qm\s*(\d+)/);
+  if (qm) return Number.parseInt(qm[1], 10);
+
+  const trailing = text.match(/(\d+)/);
+  if (trailing) return Number.parseInt(trailing[1], 10);
+
+  return 0;
+};
+
+const extractMatchNumber = (row) => {
+  const explicit = extractInteger(get(row, [
+    'Match Num',
+    'Match Number',
+    'Match #',
+    'Match',
+    'match_number',
+    'matchnum',
+    'matchnumber'
+  ]));
+  if (explicit) return explicit;
+
+  const fromKey = extractInteger(get(row, ['match_key', 'matchkey', 'Match Key']));
+  if (fromKey) return fromKey;
+
+  return 0;
+};
+
+const extractTeamNumber = (row) => {
+  const team = extractInteger(get(row, [
+    'Team Number You Are Scouting',
+    'Team Number',
+    'Scouted Team',
+    'Team',
+    'team_number',
+    'teamnumber',
+    'team_key',
+    'Team Key'
+  ]));
+  return team || 0;
 };
 
 const parsePenaltyCount = (value) => {
   const found = String(value ?? '').match(/\d+/)?.[0];
   return found ? Number(found) : 0;
 };
+
+const UNKNOWN_VALUE = /^(idk|unknown|n\/?a|na|null|undefined|none)?$/i;
+
+function normalizeGeneralNotes(input) {
+  const text = String(input || '');
+  if (!text) return null;
+
+  const normalized = text
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf('=');
+      if (idx < 0) return part;
+
+      const key = part.slice(0, idx).trim();
+      const rawValue = part.slice(idx + 1).trim();
+      const value = UNKNOWN_VALUE.test(rawValue) ? 'N/A' : rawValue;
+      return `${key}=${value}`;
+    })
+    .join(' | ');
+
+  return normalized || null;
+}
 
 async function ensureEvent(eventKey) {
   await prisma.event.upsert({
@@ -75,11 +155,13 @@ async function detectPasteType(headerLine, bodySample) {
 }
 
 function mapScoutingRowToRaw(row, eventKey) {
-  const matchNumber = Number.parseInt(get(row, ['Match Num', 'Match', 'match_number']).toString(), 10) || 0;
-  const teamNumber = Number.parseInt(get(row, ['Team Number You Are Scouting', 'Team', 'team_number']).toString(), 10) || 0;
-  const crossing = String(get(row, ['Did they cross center line for auto?', 'Auto Mobility'])).toLowerCase().trim();
-  const cycleCount = Number.parseInt(get(row, ['How many cycles', 'Cycles', 'cycle_count']).toString(), 10) || 0;
+  const matchNumber = extractMatchNumber(row);
+  const teamNumber = extractTeamNumber(row);
+  const crossing = String(get(row, ['Did they cross center line for auto?', 'Auto Mobility', 'Cross Line Auto', 'Crossed Line Auto'])).toLowerCase().trim();
+  const cycleCount = extractInteger(get(row, ['How many cycles', 'Cycles', 'cycle_count', 'Cycle Count'])) || 0;
   const penaltiesRaw = get(row, ['Things they did wrong (penalties)', 'Penalties', 'fouls']);
+  const allianceColorRaw = String(get(row, ['Alliance', 'Alliance Color', 'alliance_color', 'color'])).toLowerCase().trim();
+  const allianceColor = allianceColorRaw === 'blue' ? 'blue' : 'red';
 
   const notes = [
     `start_pos=${get(row, ['Starting Position 1 left 3 right', 'Starting Position'])}`,
@@ -103,7 +185,7 @@ function mapScoutingRowToRaw(row, eventKey) {
     scoutName: String(get(row, ['Your name:', 'Your name', 'ScoutName']) || 'csv-import'),
     team_number: teamNumber,
     match_number: matchNumber,
-    alliance_color: 'red',
+    alliance_color: allianceColor,
     auto_fuel_auto: 0,
     auto_fuel_missed: 0,
     auto_tower_climb: parseClimb(get(row, ['Auto Climb'])) === 'none' ? 0 : 1,
@@ -120,7 +202,7 @@ function mapScoutingRowToRaw(row, eventKey) {
     robot_disabled: false,
     robot_tipped: false,
     fouls_committed: parsePenaltyCount(penaltiesRaw),
-    general_notes: notes
+    general_notes: normalizeGeneralNotes(`${notes} | cycle_count=${cycleCount}`)
   };
 }
 
@@ -168,7 +250,7 @@ async function importScoutingCsv(records, eventKey) {
           robotDisabled: normalized.robot_disabled,
           robotTipped: normalized.robot_tipped,
           foulsCommitted: normalized.fouls_committed,
-          generalNotes: raw.general_notes
+          generalNotes: normalizeGeneralNotes(raw.general_notes)
         }
       });
 
@@ -339,11 +421,14 @@ async function importOprs(records, eventKey) {
 }
 
 function parseCsvText(csvText) {
-  return parse(csvText, {
+  const normalized = String(csvText || '').replace(/^\uFEFF/, '');
+  return parse(normalized, {
     columns: true,
     skip_empty_lines: true,
     trim: true,
-    relax_column_count: true
+    relax_column_count: true,
+    relax_quotes: true,
+    bom: true
   });
 }
 
@@ -353,15 +438,48 @@ function teamToNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseScheduleJsonText(text, eventKey) {
-  const parsed = JSON.parse(text);
-  const list = Array.isArray(parsed)
+function inferEventKeyFromMatchKey(matchKey) {
+  const text = String(matchKey || '').trim();
+  const found = text.match(/^([a-z0-9]+)_(qm\d+|qf\d+m\d+|sf\d+m\d+|f\d+m\d+)$/i);
+  return found?.[1] || null;
+}
+
+function inferEventKey(parsed, fallbackEventKey) {
+  const topLevel = String(parsed?.eventKey || parsed?.event_key || '').trim();
+  if (topLevel) return topLevel;
+
+  const schedule = Array.isArray(parsed)
     ? parsed
     : Array.isArray(parsed?.matches)
       ? parsed.matches
       : Array.isArray(parsed?.schedule)
         ? parsed.schedule
         : [];
+
+  const first = schedule[0] || null;
+  if (first) {
+    const firstEvent = String(first.eventKey || first.event_key || '').trim();
+    if (firstEvent) return firstEvent;
+
+    const fromKey = inferEventKeyFromMatchKey(first.match_key || first.key || first.matchKey);
+    if (fromKey) return fromKey;
+  }
+
+  return fallbackEventKey;
+}
+
+function extractScheduleList(parsed) {
+  return Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.matches)
+      ? parsed.matches
+      : Array.isArray(parsed?.schedule)
+        ? parsed.schedule
+        : [];
+}
+
+function parseScheduleJsonData(parsed, eventKey) {
+  const list = extractScheduleList(parsed);
 
   const records = [];
   for (const item of list) {
@@ -404,6 +522,54 @@ function parseScheduleJsonText(text, eventKey) {
   return records;
 }
 
+async function importOfflineBatchReports(eventKey, reports) {
+  if (!eventKey) throw new Error('eventKey is required');
+  if (!Array.isArray(reports)) throw new Error('reports must be an array');
+
+  await ensureEvent(eventKey);
+
+  let imported = 0;
+  for (const report of reports) {
+    const normalized = await normalizeMatchSubmission({ ...report, eventKey });
+    await ensureTeam(normalized.team_number);
+    await prisma.matchScoutingReport.create({
+      data: {
+        eventKey,
+        teamNumber: normalized.team_number,
+        scoutName: report.scoutName || 'offline-batch',
+        allianceColor: normalized.alliance_color,
+        matchNumber: normalized.match_number,
+        compLevel: report.compLevel || 'qm',
+        autoFuelAuto: normalized.auto_fuel_auto,
+        autoFuelMissed: normalized.auto_fuel_missed,
+        autoTowerClimb: normalized.auto_tower_climb,
+        autoMobility: normalized.auto_mobility,
+        autoHubShiftWon: normalized.auto_hub_shift_won,
+        teleopFuelScored: normalized.teleop_fuel_scored,
+        teleopFuelMissed: normalized.teleop_fuel_missed,
+        teleopDefenseRating: normalized.teleop_defense_rating,
+        teleopSpeedRating: normalized.teleop_speed_rating,
+        teleopCrossedBump: normalized.teleop_crossed_bump,
+        teleopCrossedTrench: normalized.teleop_crossed_trench,
+        endgameResult: normalized.endgame_result,
+        endgameAttemptedClimb: normalized.endgame_attempted_climb,
+        endgameTowerPoints:
+          normalized.endgame_result === 'level3' ? 30 :
+          normalized.endgame_result === 'level2' ? 20 :
+          normalized.endgame_result === 'level1' ? 15 : 0,
+        robotDisabled: normalized.robot_disabled,
+        robotTipped: normalized.robot_tipped,
+        foulsCommitted: normalized.fouls_committed,
+        generalNotes: normalizeGeneralNotes(report.general_notes || report.generalNotes)
+      }
+    });
+    await recomputeTeamStats(eventKey, normalized.team_number);
+    imported += 1;
+  }
+
+  return { imported, type: 'offline_batch', eventKey };
+}
+
 router.post('/csv', async (req, res) => {
   try {
     const { eventKey, csvText } = req.body || {};
@@ -425,12 +591,21 @@ router.post('/paste', async (req, res) => {
 
     const trimmed = String(text).trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      const jsonRecords = parseScheduleJsonText(trimmed, eventKey);
-      if (!jsonRecords.length) {
-        return res.status(400).json({ error: 'JSON schedule contains no matches' });
+      const parsed = JSON.parse(trimmed);
+
+      if (Array.isArray(parsed?.reports)) {
+        const resolvedEventKey = inferEventKey(parsed, eventKey);
+        const result = await importOfflineBatchReports(resolvedEventKey, parsed.reports);
+        return res.json(result);
       }
-      const result = await importSchedule(jsonRecords, eventKey);
-      return res.json({ ...result, type: 'schedule_json' });
+
+      const resolvedEventKey = inferEventKey(parsed, eventKey);
+      const jsonRecords = parseScheduleJsonData(parsed, resolvedEventKey);
+      if (!jsonRecords.length) {
+        return res.status(400).json({ error: 'JSON import contains no schedule matches or reports array' });
+      }
+      const result = await importSchedule(jsonRecords, resolvedEventKey);
+      return res.json({ ...result, type: 'schedule_json', eventKey: resolvedEventKey });
     }
 
     const lines = String(text).split(/\r?\n/).filter(Boolean);
@@ -444,22 +619,22 @@ router.post('/paste', async (req, res) => {
 
     if (resolvedType === 'schedule') {
       const result = await importSchedule(records, eventKey);
-      return res.json(result);
+      return res.json({ ...result, eventKey });
     }
 
     if (resolvedType === 'flat_schedule') {
       const result = await importFlatSchedule(records, eventKey);
-      return res.json(result);
+      return res.json({ ...result, eventKey });
     }
 
     if (resolvedType === 'oprs') {
       const result = await importOprs(records, eventKey);
-      return res.json(result);
+      return res.json({ ...result, eventKey });
     }
 
     if (resolvedType === 'scouting_csv') {
       const result = await importScoutingCsv(records, eventKey);
-      return res.json(result);
+      return res.json({ ...result, eventKey });
     }
 
     return res.status(400).json({ error: `Unable to classify paste type: ${resolvedType}` });
@@ -472,50 +647,8 @@ router.post('/offline-batch', async (req, res) => {
   try {
     const { eventKey, reports } = req.body || {};
     if (!eventKey) return res.status(400).json({ error: 'eventKey is required' });
-    if (!Array.isArray(reports)) return res.status(400).json({ error: 'reports must be an array' });
-
-    await ensureEvent(eventKey);
-
-    let imported = 0;
-    for (const report of reports) {
-      const normalized = await normalizeMatchSubmission({ ...report, eventKey });
-      await ensureTeam(normalized.team_number);
-      await prisma.matchScoutingReport.create({
-        data: {
-          eventKey,
-          teamNumber: normalized.team_number,
-          scoutName: report.scoutName || 'offline-batch',
-          allianceColor: normalized.alliance_color,
-          matchNumber: normalized.match_number,
-          compLevel: report.compLevel || 'qm',
-          autoFuelAuto: normalized.auto_fuel_auto,
-          autoFuelMissed: normalized.auto_fuel_missed,
-          autoTowerClimb: normalized.auto_tower_climb,
-          autoMobility: normalized.auto_mobility,
-          autoHubShiftWon: normalized.auto_hub_shift_won,
-          teleopFuelScored: normalized.teleop_fuel_scored,
-          teleopFuelMissed: normalized.teleop_fuel_missed,
-          teleopDefenseRating: normalized.teleop_defense_rating,
-          teleopSpeedRating: normalized.teleop_speed_rating,
-          teleopCrossedBump: normalized.teleop_crossed_bump,
-          teleopCrossedTrench: normalized.teleop_crossed_trench,
-          endgameResult: normalized.endgame_result,
-          endgameAttemptedClimb: normalized.endgame_attempted_climb,
-          endgameTowerPoints:
-            normalized.endgame_result === 'level3' ? 30 :
-            normalized.endgame_result === 'level2' ? 20 :
-            normalized.endgame_result === 'level1' ? 15 : 0,
-          robotDisabled: normalized.robot_disabled,
-          robotTipped: normalized.robot_tipped,
-          foulsCommitted: normalized.fouls_committed,
-          generalNotes: report.general_notes || null
-        }
-      });
-      await recomputeTeamStats(eventKey, normalized.team_number);
-      imported += 1;
-    }
-
-    return res.json({ imported });
+    const result = await importOfflineBatchReports(eventKey, reports);
+    return res.json(result);
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }

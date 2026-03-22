@@ -5,6 +5,30 @@ import { recomputeTeamStats } from '../stats.js';
 
 const router = Router();
 
+const UNKNOWN_VALUE = /^(idk|unknown|n\/?a|na|null|undefined|none)?$/i;
+
+function normalizeGeneralNotes(input) {
+  const text = String(input || '');
+  if (!text) return null;
+
+  const normalized = text
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf('=');
+      if (idx < 0) return part;
+
+      const key = part.slice(0, idx).trim();
+      const rawValue = part.slice(idx + 1).trim();
+      const value = UNKNOWN_VALUE.test(rawValue) ? 'N/A' : rawValue;
+      return `${key}=${value}`;
+    })
+    .join(' | ');
+
+  return normalized || null;
+}
+
 router.post('/match', async (req, res) => {
   try {
     const raw = req.body || {};
@@ -38,7 +62,7 @@ router.post('/match', async (req, res) => {
         robotDisabled: normalized.robot_disabled,
         robotTipped: normalized.robot_tipped,
         foulsCommitted: normalized.fouls_committed,
-        generalNotes: raw.general_notes || null
+        generalNotes: normalizeGeneralNotes(raw.general_notes)
       }
     });
 
