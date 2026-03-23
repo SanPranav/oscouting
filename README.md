@@ -4,7 +4,7 @@ Monorepo for Team 3749 event scouting, data aggregation, and match strategy gene
 
 ## Current Stack
 
-- Frontend: React + Vite (`apps/tablet`, `apps/aggregator`, `apps/dashboard`)
+- Frontend: React + Vite (`apps/tablet`, `apps/aggregator`, `apps/dashboard`, `apps/pitch`)
 - Backend: Express (`apps/server`)
 - Database: Prisma + SQLite (`packages/db/prisma/dev.db`)
 - Prediction Engine: `packages/prediction`
@@ -77,6 +77,7 @@ apps/
   tablet/       Offline scouting client
   aggregator/   Event data import and stats console
   dashboard/    Drive-team strategy and match prediction UI
+  pitch/        Standalone alliance-selection advertisement page for Team 3749
   server/       API routes for import, strategy, and sync
 
 packages/
@@ -117,6 +118,7 @@ npm run dev:server
 npm run dev:tablet
 npm run dev:aggregator
 npm run dev:dashboard
+npm run dev:pitch
 ```
 
 ## Lemonade AI Setup (Real Local LLM)
@@ -206,6 +208,7 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
 - Tablet: `http://localhost:2541`
 - Aggregator: `http://localhost:2542`
 - Dashboard: `http://localhost:2543`
+- Pick Pitch Page: `http://localhost:2544`
 
 ## Core API Endpoints
 
@@ -217,6 +220,8 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
 - `GET /api/strategy/predict/:eventKey/:matchKey?team3749Ready=true|false`
 - `GET /api/strategy/schedule/:eventKey?team=3749`
 - `GET /api/strategy/statbotics/:eventKey`
+- `GET /api/strategy/alliance-probabilities/:eventKey?refreshTba=true`
+- `POST /api/strategy/alliance-probabilities/:eventKey/live?refreshTba=true`
 
 ### Import
 
@@ -265,6 +270,16 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
   - No synthetic/fallback spider values are generated from recent notes rows.
 - Brick AI shows a loading indicator in-chat while waiting for a response:
   - `Brick is typing...`
+- Dashboard has a global event-mode toggle button:
+  - toggles `San Diego` (`2026casnd`) and `Aerospace Valley` (`2026caav`)
+  - automatically remaps match key prefix to selected event
+- Dashboard includes a `Probable Alliances` modal:
+  - uses top 8 TBA-ranked captains
+  - simulates 3 serpentine rounds (1→8, 8→1, 1→8)
+  - shows 4-team projected alliances (captain + picks 1/2/3)
+  - uses TBA ranking data + collected team aggregated scouting metrics
+  - includes a live draft override panel where you enter actual picks by team number
+  - recalculates remaining probable picks in real time as alliance selection happens IRL
 
 ## Troubleshooting
 

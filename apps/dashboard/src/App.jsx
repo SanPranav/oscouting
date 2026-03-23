@@ -1,11 +1,23 @@
 import { useEffect, useState } from 'react';
-import { Bot, MessageCircle, Radar, Send, Sparkles, X } from 'lucide-react';
+import { Bot, MessageCircle, Radar, Send, Sparkles, Swords, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Input } from './components/ui/input';
 import { Badge } from './components/ui/badge';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
+const EVENT_MODES = {
+  sanDiego: {
+    label: 'San Diego',
+    eventKey: '2026casnd',
+    defaultMatchSuffix: 'qm5'
+  },
+  aerospaceValley: {
+    label: 'Aerospace Valley',
+    eventKey: '2026caav',
+    defaultMatchSuffix: 'qm5'
+  }
+};
 
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
 
@@ -71,7 +83,10 @@ function LoadingChip({ label }) {
   );
 }
 
+const getDraftInputKey = (allianceSeed, roundNumber) => `${Number(allianceSeed)}-${Number(roundNumber)}`;
+
 export default function App() {
+  const [eventMode, setEventMode] = useState('sanDiego');
   const [eventKey, setEventKey] = useState('2026casnd');
   const [matchKey, setMatchKey] = useState('2026casnd_qm5');
   const [teamNumber, setTeamNumber] = useState('3749');
@@ -91,11 +106,20 @@ export default function App() {
   const [brickInput, setBrickInput] = useState('');
   const [brickLoading, setBrickLoading] = useState(false);
   const [brickTypingDots, setBrickTypingDots] = useState('.');
+  const [allianceModalOpen, setAllianceModalOpen] = useState(false);
+  const [allianceProjection, setAllianceProjection] = useState(null);
+  const [allianceError, setAllianceError] = useState('');
+  const [liveDraftInputs, setLiveDraftInputs] = useState({});
+  const [liveDraftProjection, setLiveDraftProjection] = useState(null);
+  const [liveDraftError, setLiveDraftError] = useState('');
+  const [liveDraftWarnings, setLiveDraftWarnings] = useState([]);
   const [loadingCounts, setLoadingCounts] = useState({
     teamPanels: 0,
     schedule: 0,
     leaderboard: 0,
-    scheduleImport: 0
+    scheduleImport: 0,
+    alliances: 0,
+    liveAlliances: 0
   });
   const [brickMessages, setBrickMessages] = useState([
     {
@@ -127,6 +151,43 @@ export default function App() {
   };
 
   const isLoading = (key) => Number(loadingCounts[key] || 0) > 0;
+
+  const buildLockedPicks = () => {
+    if (!allianceProjection?.alliances?.length) return [];
+
+    const locked = [];
+    for (const alliance of allianceProjection.alliances) {
+      const seed = Number(alliance.allianceSeed || 0);
+      for (let roundNumber = 1; roundNumber <= 3; roundNumber += 1) {
+        const rawValue = String(liveDraftInputs[getDraftInputKey(seed, roundNumber)] || '').trim();
+        if (!rawValue) continue;
+        const teamNumber = Number.parseInt(rawValue, 10);
+        if (!Number.isFinite(teamNumber) || teamNumber <= 0) continue;
+        locked.push({
+          allianceSeed: seed,
+          captainTeamNumber: Number(alliance.captainTeamNumber || 0),
+          roundNumber,
+          teamNumber
+        });
+      }
+    }
+
+    return locked;
+  };
+
+  const initializeLiveDraftFromProjection = (projection) => {
+    const nextInputs = {};
+    for (const alliance of projection?.alliances || []) {
+      const seed = Number(alliance?.allianceSeed || 0);
+      for (let roundNumber = 1; roundNumber <= 3; roundNumber += 1) {
+        nextInputs[getDraftInputKey(seed, roundNumber)] = '';
+      }
+    }
+    setLiveDraftInputs(nextInputs);
+    setLiveDraftProjection(projection || null);
+    setLiveDraftError('');
+    setLiveDraftWarnings([]);
+  };
 
   const runPrediction = async () => {
     try {
@@ -222,6 +283,111 @@ export default function App() {
     } finally {
       endLoad('leaderboard');
     }
+  };
+
+  const normalizeMatchSuffix = (rawValue, fallback) => {
+    const value = String(rawValue || '').trim();
+    if (!value) return fallback;
+    if (/^qm\d+$/i.test(value)) return value.toLowerCase();
+    if (/^\d+$/.test(value)) return `qm${value}`;
+    if (/^(ef|qf|sf|f)\d+m?\d*$/i.test(value)) return value.toLowerCase();
+    return fallback;
+  };
+
+  const applyEventMode = (modeKey) => {
+    const mode = EVENT_MODES[modeKey] || EVENT_MODES.sanDiego;
+    const currentSuffixRaw = String(matchKey || '').includes('_')
+      ? String(matchKey).split('_').slice(1).join('_')
+      : String(matchKey || '');
+    const nextMatchSuffix = normalizeMatchSuffix(currentSuffixRaw, mode.defaultMatchSuffix);
+    const nextEventKey = mode.eventKey;
+
+    setEventMode(modeKey);
+    setEventKey(nextEventKey);
+    setMatchKey(`${nextEventKey}_${nextMatchSuffix}`);
+
+    if (allianceModalOpen) {
+      loadAllianceProbabilities(nextEventKey);
+    }
+  };
+
+  const toggleEventMode = () => {
+    const nextMode = eventMode === 'sanDiego' ? 'aerospaceValley' : 'sanDiego';
+    applyEventMode(nextMode);
+  };
+
+  async function loadAllianceProbabilities(targetEventKey = eventKey) {
+    beginLoad('alliances');
+    try {
+      setAllianceError('');
+      setAllianceProjection(null);
+      const response = await fetch(`${API_BASE}/api/strategy/alliance-probabilities/${targetEventKey}?refreshTba=true`);
+      const data = await response.json();
+      if (!response.ok) {
+        setAllianceProjection(null);
+        setAllianceError(data.error || 'Failed loading alliance projections');
+        setLiveDraftProjection(null);
+        return;
+      }
+
+      const sortedData = {
+        ...data,
+        alliances: (data.alliances || []).sort((a, b) => Number(a.allianceSeed || 0) - Number(b.allianceSeed || 0))
+      };
+
+      setAllianceProjection(sortedData);
+      initializeLiveDraftFromProjection(sortedData);
+    } catch {
+      setAllianceProjection(null);
+      setAllianceError('Failed loading alliance projections');
+      setLiveDraftProjection(null);
+    } finally {
+      endLoad('alliances');
+    }
+  }
+
+  async function loadLiveAllianceProbabilities(targetEventKey = eventKey, lockedPicks = null) {
+    beginLoad('liveAlliances');
+    try {
+      setLiveDraftError('');
+      const picksPayload = Array.isArray(lockedPicks) ? lockedPicks : buildLockedPicks();
+
+      const response = await fetch(`${API_BASE}/api/strategy/alliance-probabilities/${targetEventKey}/live?refreshTba=true`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lockedPicks: picksPayload })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setLiveDraftProjection(null);
+        setLiveDraftError(data.error || 'Failed loading live alliance projection');
+        setLiveDraftWarnings([]);
+        return;
+      }
+
+      const sortedData = {
+        ...data,
+        alliances: (data.alliances || []).sort((a, b) => Number(a.allianceSeed || 0) - Number(b.allianceSeed || 0))
+      };
+
+      setLiveDraftProjection(sortedData);
+      setLiveDraftWarnings(Array.isArray(sortedData.warnings) ? sortedData.warnings : []);
+    } catch {
+      setLiveDraftProjection(null);
+      setLiveDraftError('Failed loading live alliance projection');
+      setLiveDraftWarnings([]);
+    } finally {
+      endLoad('liveAlliances');
+    }
+  }
+
+  const handleLiveDraftInputChange = (key, value) => {
+    const sanitized = String(value || '').replace(/[^0-9]/g, '');
+    setLiveDraftInputs((prev) => ({
+      ...prev,
+      [key]: sanitized
+    }));
   };
 
   const importScheduleFromPaste = async () => {
@@ -332,6 +498,18 @@ export default function App() {
     };
   }, [eventKey, teamNumber]);
 
+  useEffect(() => {
+    if (!allianceModalOpen || !allianceProjection?.alliances?.length) return;
+
+    const debounce = setTimeout(() => {
+      loadLiveAllianceProbabilities(eventKey);
+    }, 300);
+
+    return () => clearTimeout(debounce);
+  }, [allianceModalOpen, allianceProjection, liveDraftInputs, eventKey]);
+
+  const currentOnClock = liveDraftProjection?.nextOnClock || allianceProjection?.nextOnClock || null;
+
   return (
     <main className="mx-auto min-h-screen max-w-[1500px] p-6 lg:p-8">
       <div className="space-y-8 pb-28">
@@ -380,13 +558,15 @@ export default function App() {
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-            {(predictionLoading || isLoading('teamPanels') || isLoading('schedule') || isLoading('leaderboard') || isLoading('scheduleImport')) ? (
+            {(predictionLoading || isLoading('teamPanels') || isLoading('schedule') || isLoading('leaderboard') || isLoading('scheduleImport') || isLoading('alliances') || isLoading('liveAlliances')) ? (
               <div className="flex flex-wrap gap-2">
                 {predictionLoading ? <LoadingChip label="Prediction" /> : null}
                 {isLoading('teamPanels') ? <LoadingChip label="Team Panels" /> : null}
                 {isLoading('schedule') ? <LoadingChip label="Schedule" /> : null}
                 {isLoading('leaderboard') ? <LoadingChip label="Leaderboard" /> : null}
                 {isLoading('scheduleImport') ? <LoadingChip label="Schedule Import" /> : null}
+                {isLoading('alliances') ? <LoadingChip label="Alliances" /> : null}
+                {isLoading('liveAlliances') ? <LoadingChip label="Live Draft" /> : null}
               </div>
             ) : null}
 
@@ -588,7 +768,20 @@ export default function App() {
                   <CardHeader>
                     <div className="flex items-center justify-between gap-3">
                       <CardTitle className="text-base">Pick Leaderboard</CardTitle>
-                      {isLoading('leaderboard') ? <LoadingChip label="Refreshing" /> : null}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          className="gap-2"
+                          onClick={() => {
+                            setAllianceModalOpen(true);
+                            loadAllianceProbabilities();
+                          }}
+                        >
+                          <Swords className="h-4 w-4" />
+                          Probable Alliances
+                        </Button>
+                        {isLoading('leaderboard') ? <LoadingChip label="Refreshing" /> : null}
+                      </div>
                     </div>
                     <CardDescription>Best alliance partners ranked for Team {teamNumber} from live event stats</CardDescription>
                   </CardHeader>
@@ -709,6 +902,230 @@ export default function App() {
           </CardContent>
         </Card>
       </div>
+
+      <div className="fixed right-4 top-4 z-50">
+        <Button variant="outline" className="border-input bg-card/95 shadow-lg backdrop-blur" onClick={toggleEventMode}>
+          Mode: {EVENT_MODES[eventMode]?.label || 'San Diego'}
+        </Button>
+      </div>
+
+      {allianceModalOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
+          <Card className="max-h-[92vh] w-full max-w-6xl overflow-hidden border-border/80 bg-card/95 shadow-xl">
+            <CardHeader className="border-b border-input">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Most Probable Alliances · {eventKey}</CardTitle>
+                  <CardDescription>
+                    Top 8 captains with serpentine 1st-3rd picks (4 teams per alliance), using TBA rankings + collected scouting stats.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={() => loadAllianceProbabilities()} disabled={isLoading('alliances')}>
+                    {isLoading('alliances') ? 'Refreshing...' : 'Refresh'}
+                  </Button>
+                  <Button variant="outline" className="gap-1" onClick={() => setAllianceModalOpen(false)}>
+                    <X className="h-4 w-4" />
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 overflow-auto p-4">
+              {allianceError ? <p className="text-sm text-destructive">{allianceError}</p> : null}
+              {isLoading('alliances') && !allianceProjection ? <LoadingChip label="Loading alliances" /> : null}
+
+              {allianceProjection?.alliances?.length ? (
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <section className="space-y-2 rounded-md border border-input p-2">
+                    <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Baseline Probable Alliances</p>
+                    <div className="max-h-[68vh] overflow-auto rounded-md border border-input">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-input text-left text-muted-foreground">
+                            <th className="p-2">Seed</th>
+                            <th className="p-2">Captain</th>
+                            <th className="p-2">1st Pick</th>
+                            <th className="p-2">2nd Pick</th>
+                            <th className="p-2">3rd Pick</th>
+                            <th className="p-2">Final</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allianceProjection.alliances.map((alliance) => {
+                            const pickOne = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 1) || null;
+                            const pickTwo = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 2) || null;
+                            const pickThree = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 3) || null;
+
+                            const renderPick = (pick) => {
+                              if (!pick) return '—';
+                              return `${pick.teamNumber} (${Number(pick.probabilityScore || 0).toFixed(1)})`;
+                            };
+
+                            const finalTeams = [
+                              alliance.captainTeamNumber,
+                              ...(alliance.projectedPicks || []).map((pick) => pick.teamNumber)
+                            ].filter((teamNumber) => Number.isFinite(Number(teamNumber)));
+
+                            return (
+                              <tr key={`alliance-baseline-${alliance.allianceSeed}-${alliance.captainTeamNumber}`} className="border-b border-input/50 align-top">
+                                <td className="p-2 font-semibold">{alliance.allianceSeed}</td>
+                                <td className="p-2">
+                                  <div className="font-semibold">{alliance.captainTeamNumber}</div>
+                                  <div className="text-xs text-muted-foreground">{alliance.captainNickname || 'Captain'}</div>
+                                </td>
+                                <td className="p-2">{renderPick(pickOne)}</td>
+                                <td className="p-2">{renderPick(pickTwo)}</td>
+                                <td className="p-2">{renderPick(pickThree)}</td>
+                                <td className="p-2">{finalTeams.join(', ') || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+
+                  <section className="space-y-2 rounded-md border border-input p-2">
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live Draft Override (Enter Real Picks)</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadLiveAllianceProbabilities(eventKey)}
+                        disabled={isLoading('liveAlliances')}
+                      >
+                        {isLoading('liveAlliances') ? 'Updating...' : 'Update Now'}
+                      </Button>
+                    </div>
+
+                    {liveDraftError ? <p className="px-1 text-sm text-destructive">{liveDraftError}</p> : null}
+                    {liveDraftWarnings.length ? (
+                      <div className="space-y-1 rounded-md border border-input bg-background/60 p-2 text-xs text-muted-foreground">
+                        {liveDraftWarnings.slice(0, 4).map((warning) => (
+                          <p key={warning}>• {warning}</p>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {currentOnClock ? (
+                      <div className="space-y-2 rounded-md border border-input bg-background/60 p-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">On The Clock Right Now</p>
+                        <p className="text-sm">
+                          Seed {currentOnClock.allianceSeed} · Round {currentOnClock.roundNumber} · Captain {currentOnClock.captainTeamNumber}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {(currentOnClock.topCandidates || []).slice(0, 6).map((candidate) => (
+                            <Badge key={`onclock-${currentOnClock.allianceSeed}-${currentOnClock.roundNumber}-${candidate.teamNumber}`} className="border border-input bg-background text-foreground">
+                              {candidate.teamNumber} ({Number(candidate.probabilityScore || 0).toFixed(1)}){candidate.candidateType === 'captain' ? ' C' : ''}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-input bg-background/60 p-2 text-xs text-muted-foreground">
+                        All picks are locked in for the simulated draft.
+                      </div>
+                    )}
+
+                    <div className="max-h-[26vh] overflow-auto rounded-md border border-input">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-input text-left text-muted-foreground">
+                            <th className="p-2">Seed</th>
+                            <th className="p-2">Captain</th>
+                            <th className="p-2">Actual 1st</th>
+                            <th className="p-2">Actual 2nd</th>
+                            <th className="p-2">Actual 3rd</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(liveDraftProjection?.alliances || allianceProjection?.alliances || []).map((alliance) => {
+                            const seed = Number(alliance.allianceSeed || 0);
+                            return (
+                              <tr key={`live-input-${seed}-${alliance.captainTeamNumber}`} className="border-b border-input/50 align-top">
+                                <td className="p-2 font-semibold">{seed}</td>
+                                <td className="p-2">{alliance.captainTeamNumber}</td>
+                                {[1, 2, 3].map((roundNumber) => {
+                                  const key = getDraftInputKey(seed, roundNumber);
+                                  return (
+                                    <td key={key} className="p-2">
+                                      <Input
+                                        value={liveDraftInputs[key] || ''}
+                                        onChange={(e) => handleLiveDraftInputChange(key, e.target.value)}
+                                        placeholder="Team #"
+                                        className="h-8"
+                                      />
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="max-h-[38vh] overflow-auto rounded-md border border-input">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-input text-left text-muted-foreground">
+                            <th className="p-2">Seed</th>
+                            <th className="p-2">Captain</th>
+                            <th className="p-2">1st Pick</th>
+                            <th className="p-2">2nd Pick</th>
+                            <th className="p-2">3rd Pick</th>
+                            <th className="p-2">Final</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(liveDraftProjection?.alliances || allianceProjection?.alliances || []).map((alliance) => {
+                            const pickOne = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 1) || null;
+                            const pickTwo = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 2) || null;
+                            const pickThree = alliance.projectedPicks?.find((pick) => Number(pick.roundNumber) === 3) || null;
+
+                            const renderPick = (pick) => {
+                              if (!pick) return '—';
+                              const isActual = Boolean(pick.isLocked) || String(pick.source || '') === 'actual';
+                              return (
+                                <div className="space-y-1">
+                                  <div>{pick.teamNumber} ({Number(pick.probabilityScore || 0).toFixed(1)})</div>
+                                  <Badge className="border border-input bg-background text-[10px] text-foreground">
+                                    {isActual ? 'ACTUAL' : 'PROBABLE'}
+                                  </Badge>
+                                </div>
+                              );
+                            };
+
+                            const finalTeams = [
+                              alliance.captainTeamNumber,
+                              ...(alliance.projectedPicks || []).map((pick) => pick.teamNumber)
+                            ].filter((teamNumber) => Number.isFinite(Number(teamNumber)));
+
+                            return (
+                              <tr key={`alliance-live-${alliance.allianceSeed}-${alliance.captainTeamNumber}`} className="border-b border-input/50 align-top">
+                                <td className="p-2 font-semibold">{alliance.allianceSeed}</td>
+                                <td className="p-2">
+                                  <div className="font-semibold">{alliance.captainTeamNumber}</div>
+                                  <div className="text-xs text-muted-foreground">{alliance.captainNickname || 'Captain'}</div>
+                                </td>
+                                <td className="p-2">{renderPick(pickOne)}</td>
+                                <td className="p-2">{renderPick(pickTwo)}</td>
+                                <td className="p-2">{renderPick(pickThree)}</td>
+                                <td className="p-2">{finalTeams.join(', ') || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end">
         {brickOpen ? (
