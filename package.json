@@ -7,12 +7,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n SERVER,TABLET,AGGREGATOR,DASHBOARD -c blue,green,magenta,cyan \"npm run dev:server\" \"npm run dev:tablet\" \"npm run dev:aggregator\" \"npm run dev:dashboard\"",
+    "dev": "concurrently -n SERVER,TABLET,AGGREGATOR,DASHBOARD,PITCH -c blue,green,magenta,cyan,yellow \"npm run dev:server\" \"npm run dev:tablet\" \"npm run dev:aggregator\" \"npm run dev:dashboard\" \"npm run dev:pitch\"",
     "predev:server": "sh -c 'p=${PORT:-2540}; lsof -ti :$p | xargs -r kill -9'",
     "dev:server": "npm --workspace @3749/server run dev",
     "dev:tablet": "npm --workspace @3749/tablet run dev",
     "dev:aggregator": "npm --workspace @3749/aggregator run dev",
     "dev:dashboard": "npm --workspace @3749/dashboard run dev",
+    "dev:pitch": "npm --workspace @3749/pitch run dev",
     "share:tablet": "npx localtunnel --port 2541",
     "build": "npm run -ws build",
     "db:generate": "npm --workspace @3749/db run generate",

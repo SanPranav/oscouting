@@ -10,6 +10,53 @@ const router = Router();
 const tbaScheduleSyncState = new Map();
 const TBA_SCHEDULE_SYNC_TTL_MS = 90 * 1000;
 
+const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
+
+const fetchTbaRankings = async (eventKey) => {
+  const key = process.env.TBA_API_KEY;
+  if (!key) throw new Error('TBA_API_KEY missing');
+  const response = await fetch(`${TBA_BASE}/event/${eventKey}/rankings`, {
+    headers: { 'X-TBA-Auth-Key': key }
+  });
+  if (!response.ok) throw new Error(`TBA rankings request failed: ${response.status}`);
+  const data = await response.json();
+  const rankings = Array.isArray(data?.rankings) ? data.rankings : [];
+  
+  
+  const mapped = rankings.map((row) => {
+    const teamKey = String(row.team_key || '');
+    const teamNumber = Number.parseInt(teamKey.replace('frc', ''), 10);
+    const record = row.record || {};
+    if (!Number.isFinite(teamNumber) || teamNumber <= 0) return null;
+    
+    const sortOrders = Array.isArray(row.sort_orders) ? row.sort_orders : [];
+    return {
+      teamNumber,
+      rank: Number(row.rank || 0),
+      rankingPoints: Number(sortOrders[0] ?? 0),
+      wins: Number(record.wins || 0),
+      losses: Number(record.losses || 0),
+      ties: Number(record.ties || 0),
+      dq: Number(record.dq || 0),
+      matchesPlayed: Number(record.matches_played || 0),
+      team: null
+    };
+  }).filter(Boolean);
+  
+  const sorted = mapped.sort((a, b) => {
+    const rankA = Number(a.rank || 9999);
+    const rankB = Number(b.rank || 9999);
+    if (rankA !== rankB) return rankA - rankB;
+    return Number(a.teamNumber) - Number(b.teamNumber);
+  });
+  return mapped.sort((a, b) => {
+    const rankA = Number(a.rank || 9999);
+    const rankB = Number(b.rank || 9999);
+    if (rankA !== rankB) return rankA - rankB;
+    return Number(a.teamNumber) - Number(b.teamNumber);
+  });
+};
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 async function maybeRefreshScheduleFromTba(eventKey, force = false) {
@@ -178,6 +225,369 @@ function computePickLeaderboard(statsRows, ourTeam, context) {
     .map((row, index) => ({ ...row, rank: index + 1 }));
 
   return scored;
+}
+
+function computeAlliancePickProbabilities({ rankingRows, statsRows, lockedPicks = [] }) {
+  const statsByTeam = new Map((statsRows || []).map((row) => [Number(row.teamNumber), row]));
+  const sortedRankings = [...(rankingRows || [])]
+    .filter((row) => Number(row.teamNumber) > 0)
+    .sort((a, b) => {
+      const rankA = Number(a.rank || 9999);
+      const rankB = Number(b.rank || 9999);
+      if (rankA !== rankB) return rankA - rankB;
+      return Number(a.teamNumber) - Number(b.teamNumber);
+    });
+
+  const captainRows = sortedRankings.slice(0, 8);
+  if (!captainRows.length) return { alliances: [], warnings: [], nextOnClock: null };
+
+  const rankingByTeam = new Map(sortedRankings.map((row) => [Number(row.teamNumber), row]));
+  const maxRank = Math.max(1, ...sortedRankings.map((row) => Number(row.rank || 1)));
+  const maxRp = Math.max(1, ...sortedRankings.map((row) => Number(row.rankingPoints || 0)));
+  const warnings = [];
+
+  const allianceBySeed = new Map();
+  const captainSeedByTeam = new Map();
+  const assignedTeamNumbers = new Set();
+
+  for (const row of captainRows) {
+    const allianceSeed = Number(row.rank || 0);
+    const teamNumber = Number(row.teamNumber || 0);
+    if (allianceSeed <= 0 || teamNumber <= 0) continue;
+    
+    allianceBySeed.set(allianceSeed, {
+      allianceSeed,
+      captainTeamNumber: teamNumber,
+      captainNickname: row.team?.nickname || null,
+      captainRankingPoints: Number(row.rankingPoints || 0),
+      projectedPicks: []
+    });
+    captainSeedByTeam.set(teamNumber, allianceSeed);
+    assignedTeamNumbers.add(teamNumber);
+  }
+
+  const seedOrderAsc = [...allianceBySeed.keys()].sort((a, b) => a - b);
+  if (!seedOrderAsc.length) return { alliances: [], warnings: [], nextOnClock: null };
+  
+  const unassignedTeamNumbers = new Set(
+    sortedRankings
+      .map((row) => Number(row.teamNumber || 0))
+      .filter((teamNumber) => teamNumber > 0 && !assignedTeamNumbers.has(teamNumber))
+  );
+
+  const lockBySlot = new Map();
+  for (const rawLock of lockedPicks || []) {
+    const roundNumber = Number(rawLock?.roundNumber || 0);
+    const teamNumber = Number(rawLock?.teamNumber || 0);
+    const requestedSeed = Number(rawLock?.allianceSeed || 0);
+    const captainTeamNumber = Number(rawLock?.captainTeamNumber || 0);
+
+    if (roundNumber < 1 || roundNumber > 3 || teamNumber <= 0) continue;
+
+    let resolvedSeed = requestedSeed;
+    if (resolvedSeed <= 0 && captainTeamNumber > 0) {
+      resolvedSeed = Number(captainSeedByTeam.get(captainTeamNumber) || 0);
+    }
+
+    if (resolvedSeed <= 0 || !allianceBySeed.has(resolvedSeed)) {
+      warnings.push(`Ignored lock for team ${teamNumber}: invalid captain/seed context.`);
+      continue;
+    }
+
+    const slotKey = `${resolvedSeed}:${roundNumber}`;
+    if (lockBySlot.has(slotKey)) {
+      warnings.push(`Duplicate lock for seed ${resolvedSeed} round ${roundNumber}; keeping latest entry.`);
+    }
+
+    lockBySlot.set(slotKey, {
+      allianceSeed: resolvedSeed,
+      roundNumber,
+      teamNumber
+    });
+  }
+
+  const scoreCandidateForCaptain = (captainTeamNumber, candidateTeamNumber, roundNumber) => {
+    const captainRow = rankingByTeam.get(Number(captainTeamNumber)) || null;
+    const candidateRow = rankingByTeam.get(Number(candidateTeamNumber)) || null;
+    const captainStats = statsByTeam.get(Number(captainTeamNumber)) || {};
+    const candidateStats = statsByTeam.get(Number(candidateTeamNumber)) || {};
+
+    const candidateRank = Number(candidateRow?.rank || maxRank);
+    const rankScore = clamp(((maxRank - candidateRank + 1) / maxRank) * 100, 0, 100);
+    const rpScore = clamp((Number(candidateRow?.rankingPoints || 0) / maxRp) * 100, 0, 100);
+
+    const candidateTeleop = Number(candidateStats.spiderTeleop || 0);
+    const candidateDefense = Number(candidateStats.spiderDefense || 0);
+    const candidateReliability = Number(candidateStats.spiderReliability || 0);
+    const candidateEndgame = Number(candidateStats.spiderEndgame || 0);
+
+    const candidatePerformance = clamp(
+      candidateTeleop * 0.4 +
+        candidateDefense * 0.2 +
+        candidateReliability * 0.25 +
+        candidateEndgame * 0.15,
+      0,
+      100
+    );
+
+    const captainTeleop = Number(captainStats.spiderTeleop || 60);
+    const captainDefense = Number(captainStats.spiderDefense || 60);
+    const captainEndgame = Number(captainStats.spiderEndgame || 60);
+
+    const needTeleop = clamp((75 - captainTeleop) / 75, 0, 1);
+    const needDefense = clamp((70 - captainDefense) / 70, 0, 1);
+    const needEndgame = clamp((70 - captainEndgame) / 70, 0, 1);
+
+    const fitScore = clamp(
+      candidateTeleop * (0.35 + needTeleop * 0.35) +
+        candidateDefense * (0.2 + needDefense * 0.35) +
+        candidateEndgame * (0.15 + needEndgame * 0.25),
+      0,
+      100
+    );
+
+    const roundWeight = roundNumber === 1
+      ? { rank: 0.36, rp: 0.16, perf: 0.30, fit: 0.18 }
+      : roundNumber === 2
+        ? { rank: 0.22, rp: 0.10, perf: 0.32, fit: 0.36 }
+        : { rank: 0.16, rp: 0.08, perf: 0.30, fit: 0.46 };
+
+    const captainStrength = clamp(
+      Number(captainRow?.rankingPoints || 0) > 0 ? Number(captainRow?.rankingPoints || 0) : 0,
+      0,
+      maxRp
+    );
+
+    const captainBias = maxRp > 0 ? clamp((captainStrength / maxRp) * 5, 0, 5) : 0;
+
+    const composite = clamp(
+      rankScore * roundWeight.rank +
+        rpScore * roundWeight.rp +
+        candidatePerformance * roundWeight.perf +
+        fitScore * roundWeight.fit +
+        captainBias,
+      0,
+      100
+    );
+
+    return Number(composite.toFixed(2));
+  };
+
+  const shiftCaptainsAfterCaptainPick = (pickedCaptainSeed) => {
+    if (!Number.isFinite(pickedCaptainSeed) || pickedCaptainSeed < 1 || pickedCaptainSeed > 8) return false;
+
+    for (let seed = pickedCaptainSeed; seed < 8; seed += 1) {
+      const targetAlliance = allianceBySeed.get(seed);
+      const sourceAlliance = allianceBySeed.get(seed + 1);
+      if (!targetAlliance || !sourceAlliance) continue;
+
+      const nextCaptainTeamNumber = Number(sourceAlliance.captainTeamNumber || 0);
+      if (nextCaptainTeamNumber <= 0) {
+        targetAlliance.captainTeamNumber = 0;
+        targetAlliance.captainNickname = null;
+        targetAlliance.captainRankingPoints = 0;
+        continue;
+      }
+
+      captainSeedByTeam.set(nextCaptainTeamNumber, seed);
+
+      targetAlliance.captainTeamNumber = nextCaptainTeamNumber;
+      targetAlliance.captainNickname = sourceAlliance.captainNickname || null;
+      targetAlliance.captainRankingPoints = Number(sourceAlliance.captainRankingPoints || 0);
+    }
+
+    const allianceEight = allianceBySeed.get(8);
+    if (!allianceEight) return false;
+
+    const replacementRow = sortedRankings.find((row) => {
+      const teamNumber = Number(row.teamNumber || 0);
+      const isUnassigned = unassignedTeamNumbers.has(teamNumber);
+      const isCaptain = captainSeedByTeam.has(teamNumber);
+      return teamNumber > 0 && isUnassigned && !isCaptain;
+    });
+
+    if (!replacementRow) {
+      allianceEight.captainTeamNumber = 0;
+      allianceEight.captainNickname = null;
+      allianceEight.captainRankingPoints = 0;
+      warnings.push(`Alliance 8 has no captain replacement available after captain transfer.`);
+      return false;
+    }
+
+    const replacementTeamNumber = Number(replacementRow.teamNumber || 0);
+    unassignedTeamNumbers.delete(replacementTeamNumber);
+    assignedTeamNumbers.add(replacementTeamNumber);
+    captainSeedByTeam.set(replacementTeamNumber, 8);
+
+    allianceEight.captainTeamNumber = replacementTeamNumber;
+    allianceEight.captainNickname = replacementRow.team?.nickname || null;
+    allianceEight.captainRankingPoints = Number(replacementRow.rankingPoints || 0);
+    return true;
+  };
+
+  const getCandidateEntries = (roundNumber, allianceSeed, options = {}) => {
+    const allowCaptainSelections = Boolean(options.allowCaptainSelections);
+    const alliance = allianceBySeed.get(allianceSeed);
+    if (!alliance || Number(alliance.captainTeamNumber || 0) <= 0) return [];
+
+    const captainTeamNumber = Number(alliance.captainTeamNumber);
+    const candidateEntries = [];
+
+    for (const row of sortedRankings) {
+      const teamNumber = Number(row.teamNumber || 0);
+      if (teamNumber <= 0 || teamNumber === captainTeamNumber) continue;
+
+      const captainSeed = captainSeedByTeam.get(teamNumber);
+      const isCaptainElsewhere = Number.isFinite(captainSeed) && captainSeed !== allianceSeed;
+      const isUnassigned = unassignedTeamNumbers.has(teamNumber);
+      const isEligible = isUnassigned || (allowCaptainSelections && roundNumber === 1 && isCaptainElsewhere);
+      if (!isEligible) continue;
+
+      const probabilityScore = scoreCandidateForCaptain(captainTeamNumber, teamNumber, roundNumber);
+      candidateEntries.push({
+        teamNumber,
+        nickname: row.team?.nickname || null,
+        eventRank: Number(row.rank || 0),
+        rankingPoints: Number(row.rankingPoints || 0),
+        probabilityScore,
+        candidateType: isCaptainElsewhere ? 'captain' : 'pool'
+      });
+    }
+
+    return candidateEntries.sort((a, b) => (
+      b.probabilityScore - a.probabilityScore ||
+      a.eventRank - b.eventRank ||
+      a.teamNumber - b.teamNumber
+    ));
+  };
+
+  const applyPick = ({ allianceSeed, roundNumber, overallPickNumber, pick, source, isLocked }) => {
+    const alliance = allianceBySeed.get(allianceSeed);
+    if (!alliance || Number(alliance.captainTeamNumber || 0) <= 0) return false;
+
+    const teamNumber = Number(pick.teamNumber || 0);
+    if (teamNumber <= 0) return false;
+
+    const candidateCaptainSeed = captainSeedByTeam.get(teamNumber);
+    const pickingCaptainTeamNumber = Number(alliance.captainTeamNumber || 0);
+
+    if (isLocked && roundNumber === 1 && Number.isFinite(candidateCaptainSeed) && candidateCaptainSeed !== allianceSeed) {
+      // Captain is being picked in round 1: remove and shift lower captains up, then fill seed 8 from next rank
+      captainSeedByTeam.delete(teamNumber);
+      unassignedTeamNumbers.delete(teamNumber);
+      assignedTeamNumbers.add(teamNumber);
+      shiftCaptainsAfterCaptainPick(candidateCaptainSeed);
+    } else {
+      if (!unassignedTeamNumbers.has(teamNumber)) return false;
+      unassignedTeamNumbers.delete(teamNumber);
+      assignedTeamNumbers.add(teamNumber);
+    }
+
+    alliance.projectedPicks.push({
+      pickNumber: roundNumber,
+      roundNumber,
+      overallPickNumber,
+      source,
+      isLocked,
+      selectedByCaptain: pickingCaptainTeamNumber,
+      teamNumber,
+      nickname: pick.nickname || null,
+      eventRank: Number(pick.eventRank || 0),
+      rankingPoints: Number(pick.rankingPoints || 0),
+      probabilityScore: Number(Number(pick.probabilityScore || 0).toFixed(2)),
+      candidateType: pick.candidateType || 'pool'
+    });
+
+    return true;
+  };
+
+  const roundOrders = [seedOrderAsc, [...seedOrderAsc].reverse(), seedOrderAsc];
+  let overallPickNumber = 1;
+  let nextOnClock = null;
+
+  for (let roundIndex = 0; roundIndex < roundOrders.length; roundIndex += 1) {
+    const roundNumber = roundIndex + 1;
+    const order = roundOrders[roundIndex];
+
+    for (const allianceSeed of order) {
+      const alliance = allianceBySeed.get(allianceSeed);
+      if (!alliance || Number(alliance.captainTeamNumber || 0) <= 0) continue;
+
+      const slotKey = `${allianceSeed}:${roundNumber}`;
+      const lockedPick = lockBySlot.get(slotKey) || null;
+      const candidates = getCandidateEntries(roundNumber, allianceSeed, {
+        allowCaptainSelections: Boolean(lockedPick)
+      });
+      if (!candidates.length) {
+        warnings.push(`No available candidates for seed ${allianceSeed} round ${roundNumber}.`);
+        continue;
+      }
+
+      const candidateByTeam = new Map(candidates.map((entry) => [Number(entry.teamNumber), entry]));
+
+      if (!nextOnClock && !lockedPick) {
+        nextOnClock = {
+          allianceSeed,
+          roundNumber,
+          overallPickNumber,
+          captainTeamNumber: Number(alliance.captainTeamNumber || 0),
+          captainNickname: alliance.captainNickname || null,
+          topCandidates: candidates.slice(0, 8)
+        };
+      }
+
+      let chosen = null;
+      let source = 'projected';
+      let isLocked = false;
+
+      if (lockedPick) {
+        const lockedTeamNumber = Number(lockedPick.teamNumber || 0);
+        const lockedCandidate = candidateByTeam.get(lockedTeamNumber) || null;
+        if (lockedCandidate) {
+          chosen = lockedCandidate;
+          source = 'actual';
+          isLocked = true;
+        } else {
+          warnings.push(`Locked pick ${lockedTeamNumber} for seed ${allianceSeed} round ${roundNumber} is unavailable; projected value used.`);
+        }
+      }
+
+      if (!chosen) {
+        chosen = candidates[0] || null;
+        source = 'projected';
+        isLocked = false;
+      }
+
+      if (!chosen) continue;
+
+      const pickApplied = applyPick({
+        allianceSeed,
+        roundNumber,
+        overallPickNumber,
+        pick: chosen,
+        source,
+        isLocked
+      });
+
+      if (pickApplied) overallPickNumber += 1;
+    }
+  }
+
+  const alliances = seedOrderAsc
+    .map((seed) => allianceBySeed.get(seed))
+    .filter(Boolean)
+    .sort((a, b) => Number(a.allianceSeed || 0) - Number(b.allianceSeed || 0))
+    .map((alliance) => ({
+      ...alliance,
+      projectedTeamNumbers: [alliance.captainTeamNumber, ...alliance.projectedPicks.map((pick) => pick.teamNumber)]
+        .filter((teamNumber) => Number(teamNumber) > 0)
+    }));
+
+  return {
+    alliances,
+    warnings,
+    nextOnClock
+  };
 }
 
 router.get('/stats/:eventKey', async (req, res) => {
@@ -707,6 +1117,108 @@ router.get('/leaderboard/:eventKey', async (req, res) => {
   });
 });
 
+router.get('/alliance-probabilities/:eventKey', async (req, res) => {
+  const eventKey = req.params.eventKey;
+  const forceTbaRefresh = String(req.query.refreshTba || '').toLowerCase() === 'true';
+
+  try {
+    await maybeRefreshScheduleFromTba(eventKey, true);
+  } catch (err) {
+    console.error(`[alliance-probabilities] TBA sync failed: ${err.message}`);
+  }
+
+  const rankingRows = await prisma.ranking.findMany({
+    where: { eventKey },
+    include: {
+      team: {
+        select: { nickname: true }
+      }
+    },
+    orderBy: [
+      { rank: 'asc' },
+      { teamNumber: 'asc' }
+    ]
+  });
+  const fetchSource = 'database';
+
+  const statsRows = await prisma.teamAggregatedStat.findMany({ where: { eventKey } });
+
+  if (!rankingRows.length) {
+    res.status(400).json({ error: `No rankings found for ${eventKey}. Run TBA sync first.` });
+    return;
+  }
+
+  const { alliances, warnings, nextOnClock } = computeAlliancePickProbabilities({ rankingRows, statsRows });
+  res.json({
+    eventKey,
+    draftFormat: 'serpentine',
+    rounds: 3,
+    teamsPerAlliance: 4,
+    captainCount: alliances.length,
+    alliances,
+    warnings,
+    nextOnClock,
+    rankingsSource: fetchSource
+  });
+});
+
+router.post('/alliance-probabilities/:eventKey/live', async (req, res) => {
+  const eventKey = req.params.eventKey;
+  const forceTbaRefresh = String(req.query.refreshTba || '').toLowerCase() === 'true';
+
+  try {
+    await maybeRefreshScheduleFromTba(eventKey, true);
+  } catch (err) {
+    console.error(`[alliance-probabilities/live] TBA sync failed: ${err.message}`);
+  }
+
+  const rawLocks = Array.isArray(req.body?.lockedPicks) ? req.body.lockedPicks : [];
+  const lockedPicks = rawLocks
+    .map((entry) => ({
+      allianceSeed: Number(entry?.allianceSeed || 0),
+      captainTeamNumber: Number(entry?.captainTeamNumber || 0),
+      roundNumber: Number(entry?.roundNumber || 0),
+      teamNumber: Number(entry?.teamNumber || 0)
+    }))
+    .filter((entry) => entry.roundNumber >= 1 && entry.roundNumber <= 3 && entry.teamNumber > 0 && (entry.allianceSeed > 0 || entry.captainTeamNumber > 0))
+    .slice(0, 24);
+
+  const rankingRows = await prisma.ranking.findMany({
+    where: { eventKey },
+    include: {
+      team: {
+        select: { nickname: true }
+      }
+    },
+    orderBy: [
+      { rank: 'asc' },
+      { teamNumber: 'asc' }
+    ]
+  });
+  const fetchSource = 'database';
+
+  const statsRows = await prisma.teamAggregatedStat.findMany({ where: { eventKey } });
+
+  if (!rankingRows.length) {
+    res.status(400).json({ error: `No rankings found for ${eventKey}. Run TBA sync first.` });
+    return;
+  }
+
+  const { alliances, warnings, nextOnClock } = computeAlliancePickProbabilities({ rankingRows, statsRows, lockedPicks });
+  res.json({
+    eventKey,
+    draftFormat: 'serpentine',
+    rounds: 3,
+    teamsPerAlliance: 4,
+    captainCount: alliances.length,
+    alliances,
+    lockedPicks,
+    warnings,
+    nextOnClock,
+    rankingsSource: fetchSource
+  });
+});
+
 router.post('/brick-ai/:eventKey', async (req, res) => {
   const eventKey = req.params.eventKey;
   const question = String(req.body?.question || '').trim();
@@ -883,6 +1395,38 @@ router.post('/brick-ai/:eventKey', async (req, res) => {
     degraded: true,
     dataScope: 'all-available-with-event-priority',
     warning: 'Brick AI temporarily disabled'
+  });
+});
+
+router.get('/debug/rankings/:eventKey', async (req, res) => {
+  const eventKey = req.params.eventKey;
+  
+  console.log(`\n[DEBUG] Rankings diagnostic for ${eventKey}`);
+  
+  let tbaRankings = [];
+  try {
+    tbaRankings = await fetchTbaRankings(eventKey);
+    console.log(`✓ Fetched ${tbaRankings.length} rankings from TBA`);
+    console.log(`  Top 8: ${tbaRankings.slice(0, 8).map(r => `${r.teamNumber}(rank${r.rank})`).join(', ')}`);
+  } catch (err) {
+    console.warn(`✗ TBA fetch failed: ${err.message}`);
+  }
+  
+  const dbRankings = await prisma.ranking.findMany({
+    where: { eventKey },
+    orderBy: [{ rank: 'asc' }, { teamNumber: 'asc' }],
+    take: 20
+  });
+  console.log(`\n✓ Database has ${dbRankings.length} rankings total`);
+  console.log(`  Top 8: ${dbRankings.slice(0, 8).map(r => `${r.teamNumber}(rank${r.rank})`).join(', ')}`);
+  
+  res.json({
+    eventKey,
+    tbaCount: tbaRankings.length,
+    tbaTop8: tbaRankings.slice(0, 8).map(r => ({ teamNumber: r.teamNumber, rank: r.rank, rankingPoints: r.rankingPoints })),
+    dbCount: dbRankings.length,
+    dbTop8: dbRankings.slice(0, 8).map(r => ({ teamNumber: r.teamNumber, rank: r.rank, rankingPoints: r.rankingPoints })),
+    tbaApiKeyConfigured: !!process.env.TBA_API_KEY
   });
 });
 

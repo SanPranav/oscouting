@@ -110,5 +110,48 @@ export async function syncTbaEvent(eventKey) {
     });
   }
 
-  return { eventKey, teams: teams.length, matches: matches.length };
+  const rankingsResponse = await tba(`/event/${eventKey}/rankings`).catch(() => ({ rankings: [] }));
+  const rankingRows = Array.isArray(rankingsResponse?.rankings) ? rankingsResponse.rankings : [];
+
+  for (const row of rankingRows) {
+    const teamKey = String(row.team_key || '');
+    const teamNumber = Number.parseInt(teamKey.replace('frc', ''), 10);
+    if (!Number.isFinite(teamNumber) || teamNumber <= 0) continue;
+
+    const record = row.record || {};
+    const sortOrders = Array.isArray(row.sort_orders) ? row.sort_orders : [];
+
+    await prisma.ranking.upsert({
+      where: {
+        eventKey_teamNumber: {
+          eventKey,
+          teamNumber
+        }
+      },
+      update: {
+        rank: Number(row.rank || 0) || null,
+        rankingPoints: Number(sortOrders[0] ?? 0) || 0,
+        wins: Number(record.wins || 0),
+        losses: Number(record.losses || 0),
+        ties: Number(record.ties || 0),
+        dq: Number(record.dq || 0),
+        matchesPlayed: Number(record.matches_played || 0),
+        tbaSyncedAt: new Date()
+      },
+      create: {
+        eventKey,
+        teamNumber,
+        rank: Number(row.rank || 0) || null,
+        rankingPoints: Number(sortOrders[0] ?? 0) || 0,
+        wins: Number(record.wins || 0),
+        losses: Number(record.losses || 0),
+        ties: Number(record.ties || 0),
+        dq: Number(record.dq || 0),
+        matchesPlayed: Number(record.matches_played || 0),
+        tbaSyncedAt: new Date()
+      }
+    });
+  }
+
+  return { eventKey, teams: teams.length, matches: matches.length, rankings: rankingRows.length };
 }
