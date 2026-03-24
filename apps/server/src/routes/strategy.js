@@ -947,8 +947,13 @@ router.get('/robot-status/:eventKey', async (req, res) => {
 
 router.get('/predict/:eventKey/:matchKey', async (req, res) => {
   try {
-    const team3749Ready = String(req.query.team3749Ready ?? 'true').toLowerCase() !== 'false';
-    const result = await predictMatch(req.params.eventKey, req.params.matchKey, { team3749Ready });
+    const focusTeam = Number.parseInt(String(req.query.team ?? req.query.focusTeam ?? '3749'), 10) || 3749;
+    const teamReady = String(req.query.teamReady ?? req.query.team3749Ready ?? 'true').toLowerCase() !== 'false';
+    const result = await predictMatch(req.params.eventKey, req.params.matchKey, {
+      focusTeam,
+      teamReady,
+      team3749Ready: teamReady
+    });
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });

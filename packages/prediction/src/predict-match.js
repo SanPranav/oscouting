@@ -690,7 +690,10 @@ export async function fetchTeamStatboticsData(teamNumbers, year = 2026) {
 }
 
 export async function predictMatch(eventKey, matchKey, options = {}) {
-  const team3749Ready = options.team3749Ready !== false;
+  const focusTeam = Number.parseInt(String(options.focusTeam ?? options.teamNumber ?? '3749'), 10) || 3749;
+  const team3749Ready = options.teamReady !== undefined
+    ? options.teamReady !== false
+    : options.team3749Ready !== false;
   const normalizedKey = buildNormalizedKey(eventKey, matchKey);
 
   let match = await prisma.match.findUnique({ where: { matchKey: normalizedKey } });
@@ -851,8 +854,8 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
 
   const redSet = new Set(redTeams);
   const blueSet = new Set(blueTeams);
-  const team3749Playing = redSet.has(3749) || blueSet.has(3749);
-  const ourAlliance = redSet.has(3749) ? 'red' : blueSet.has(3749) ? 'blue' : null;
+  const team3749Playing = redSet.has(focusTeam) || blueSet.has(focusTeam);
+  const ourAlliance = redSet.has(focusTeam) ? 'red' : blueSet.has(focusTeam) ? 'blue' : null;
   const opponentTeams = ourAlliance === 'red' ? blueTeams : ourAlliance === 'blue' ? redTeams : [];
   const allyTeams = ourAlliance === 'red' ? redTeams : ourAlliance === 'blue' ? blueTeams : [];
 
@@ -920,7 +923,7 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
 
   let narrative = 'Prediction generated from available scouting data.';
   if (!team3749Playing) {
-    narrative = '3749 is not playing.';
+    narrative = `${focusTeam} is not playing.`;
   } else {
     try {
       narrative = await callSmolLM(
@@ -944,11 +947,11 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
         const strengthsText = opponentStrengths.length
           ? ` Respect: ${opponentStrengths.slice(0, 2).join('; ')}.`
           : '';
-        narrative = `3749 focus: target opponent weaknesses — ${opponentWeaknesses.slice(0, 3).join('; ')}.${strengthsText}`;
+        narrative = `${focusTeam} focus: target opponent weaknesses — ${opponentWeaknesses.slice(0, 3).join('; ')}.${strengthsText}`;
       } else if (redPredicted > bluePredicted) {
-        narrative = '3749 focus: keep cycles clean and protect your lead with low-foul defense.';
+        narrative = `${focusTeam} focus: keep cycles clean and protect your lead with low-foul defense.`;
       } else {
-        narrative = '3749 focus: speed up fuel cycle handoff and force opponent errors in transition.';
+        narrative = `${focusTeam} focus: speed up fuel cycle handoff and force opponent errors in transition.`;
       }
     }
   }
@@ -958,15 +961,15 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
   const allyTeamStats = allyTeams
     .map((teamNumber) => effectiveByTeam.get(teamNumber))
     .filter(Boolean);
-  const ourTeamNotes = scoutNotesByTeam['3749'] || [];
-  const ourDriveProfile = buildOurDriveProfile(ourTeamNotes, effectiveByTeam.get(3749));
+  const ourTeamNotes = scoutNotesByTeam[String(focusTeam)] || [];
+  const ourDriveProfile = buildOurDriveProfile(ourTeamNotes, effectiveByTeam.get(focusTeam));
   if (team3749Playing && opponentTeams.length > 0) {
     tacticalPlan = generateTacticalStrategy(
       opponentTeams,
       statMap,
       allyTeamStats,
       scoutNotesByTeam,
-      effectiveByTeam.get(3749),
+      effectiveByTeam.get(focusTeam),
       {
         team3749Ready,
         ourDriveProfile
@@ -977,6 +980,7 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
       const aiTactical = await generateAiTacticalEnrichment({
         eventKey,
         matchKey,
+        focusTeam,
         team3749Ready,
         ourAlliance,
         redPredicted,
@@ -1010,6 +1014,9 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
     redPredicted,
     bluePredicted,
     confidence: redEffectiveStats.length + blueEffectiveStats.length >= 4 ? 'medium' : 'low',
+    focusTeam,
+    focusTeamPlaying: team3749Playing,
+    focusTeamReady: team3749Ready,
     team3749Playing,
     ourAlliance,
     opponentWeaknesses,

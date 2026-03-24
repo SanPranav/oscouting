@@ -202,7 +202,7 @@ export default function App() {
       setPredictionLoadingLabel('Generating match prediction...');
 
       const { response, data } = await fetchJsonWithProgress(
-        `${API_BASE}/api/strategy/predict/${eventKey}/${matchKey}?team3749Ready=${team3749Ready}`
+        `${API_BASE}/api/strategy/predict/${eventKey}/${matchKey}?team=${encodeURIComponent(teamNumber)}&teamReady=${team3749Ready}`
       );
       if (!response.ok) {
         setError(data.error || 'Prediction failed');
@@ -633,7 +633,9 @@ export default function App() {
                           </p>
                         </div>
                       ) : null}
-                      {result.team3749Playing ? <p>3749 alliance: <span className="font-semibold">{result.ourAlliance}</span></p> : <p className="font-semibold">3749 is not playing.</p>}
+                      {result.focusTeamPlaying ?? result.team3749Playing
+                        ? <p>{result.focusTeam || teamNumber} alliance: <span className="font-semibold">{result.ourAlliance}</span></p>
+                        : <p className="font-semibold">{result.focusTeam || teamNumber} is not playing.</p>}
                       {Array.isArray(result.opponentWeaknesses) && result.opponentWeaknesses.length ? (
                         <div>
                           <p className="font-medium">Opponent Weaknesses</p>
@@ -663,7 +665,7 @@ export default function App() {
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">Drive-Team Tactical Strategy</CardTitle>
-                      <CardDescription>Concise calls for 2026 Reefscape: mobility, lane denial, endgame conversion.</CardDescription>
+                      <CardDescription>Concise calls for 2026 Rebuilt: mobility, lane denial, endgame conversion.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 text-sm">
                       <div className="flex items-center justify-between rounded-md border border-input p-2">
