@@ -961,6 +961,7 @@ router.get('/schedule/:eventKey', async (req, res) => {
   await maybeRefreshScheduleFromTba(eventKey, forceTbaRefresh);
 
   const teamFilter = Number.parseInt(String(req.query.team || ''), 10);
+  const focusTeam = Number.isFinite(teamFilter) ? teamFilter : 3749;
 
   const where = Number.isFinite(teamFilter)
     ? {
@@ -999,10 +1000,10 @@ router.get('/schedule/:eventKey', async (req, res) => {
   }, 0);
 
   const schedule = rows.map((row) => {
-    const contains3749 = [row.redTeam1, row.redTeam2, row.redTeam3, row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(3749);
-    const alliance3749 = [row.redTeam1, row.redTeam2, row.redTeam3].includes(3749)
+    const containsFocusTeam = [row.redTeam1, row.redTeam2, row.redTeam3, row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(focusTeam);
+    const allianceForTeam = [row.redTeam1, row.redTeam2, row.redTeam3].includes(focusTeam)
       ? 'red'
-      : [row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(3749)
+      : [row.blueTeam1, row.blueTeam2, row.blueTeam3].includes(focusTeam)
         ? 'blue'
         : null;
 
@@ -1022,8 +1023,11 @@ router.get('/schedule/:eventKey', async (req, res) => {
       blueScore: row.blueScore,
       status: scoreCompleted || reportCompleted ? 'completed' : 'scheduled',
       statusSource: scoreCompleted ? 'score' : reportCompleted ? 'scouting_reports' : 'schedule',
-      contains3749,
-      alliance3749,
+      contains3749: containsFocusTeam,
+      alliance3749: allianceForTeam,
+      focusTeam,
+      containsFocusTeam,
+      allianceForTeam,
       predictedTime: row.predictedTime,
       latestReportedQual
     };

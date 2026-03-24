@@ -185,7 +185,7 @@ export default function App() {
       const startResponse = await fetch(startUrl, { method: 'POST' });
       const started = await startResponse.json();
       if (!startResponse.ok || !started?.jobId) {
-        setMessage(started.error || 'Failed to start scrape job');
+        setMessage(started.error || 'Failed to start refetch job');
         return;
       }
 
@@ -195,7 +195,7 @@ export default function App() {
         const progressData = await progressResponse.json();
 
         if (!progressResponse.ok) {
-          setMessage(progressData.error || 'Failed to fetch scrape progress');
+          setMessage(progressData.error || 'Failed to fetch refetch progress');
           return;
         }
 
@@ -212,7 +212,7 @@ export default function App() {
 
         if (job.status === 'completed') break;
         if (job.status === 'failed') {
-          setMessage(job.error || 'Scrape job failed');
+          setMessage(job.error || 'Refetch job failed');
           return;
         }
 
@@ -233,8 +233,8 @@ export default function App() {
   const scrape = async () => {
     await runScrapeJob({
       startUrl: `${API_BASE}/api/sync/scrape/${eventKey}/job`,
-      loadingText: 'Scraping and syncing data...',
-      initialMessage: 'Starting scrape for this event...',
+      loadingText: 'Refetching and syncing data...',
+      initialMessage: 'Starting refetch for this event...',
       completedMessage: (job) => `Imported ${job.importedRows || 0} rows (${job.processedRows || 0}/${job.totalRows || 0})`
     });
   };
@@ -242,9 +242,9 @@ export default function App() {
   const scrapeAll = async () => {
     await runScrapeJob({
       startUrl: `${API_BASE}/api/sync/scrape-all/job`,
-      loadingText: 'Scraping all events...',
-      initialMessage: 'Starting global scrape job...',
-      completedMessage: (job) => `Global scrape imported ${job.importedRows || 0} rows into ${job.eventKey}`
+      loadingText: 'Refetching all events...',
+      initialMessage: 'Starting global refetch job...',
+      completedMessage: (job) => `Global refetch imported ${job.importedRows || 0} rows into ${job.eventKey}`
     });
   };
 
@@ -494,8 +494,8 @@ export default function App() {
             <Input value={eventKey} onChange={(e) => setEventKey(e.target.value)} placeholder="event key (e.g. 2026casnd)" />
             <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match (e.g. qm24 or 24)" />
             <Button onClick={load}>Load Stats</Button>
-            <Button variant="secondary" onClick={scrape}>Scrape 2485</Button>
-            <Button variant="outline" onClick={scrapeAll}>Scrape All 2485</Button>
+            <Button variant="secondary" onClick={scrape}>Refetch</Button>
+            <Button variant="outline" onClick={scrapeAll}>Refetch All</Button>
           </div>
 
           <Input

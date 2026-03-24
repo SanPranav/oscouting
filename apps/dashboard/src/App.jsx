@@ -16,6 +16,11 @@ const EVENT_MODES = {
     label: 'Aerospace Valley',
     eventKey: '2026caav',
     defaultMatchSuffix: 'qm5'
+  },
+  custom: {
+    label: 'Custom Event',
+    eventKey: '',
+    defaultMatchSuffix: 'qm5'
   }
 };
 
@@ -219,6 +224,7 @@ export default function App() {
     beginLoad('teamPanels');
     try {
       setError('');
+      const numericTeam = Number(teamNumber);
       const [detailRes, statusRes, statsRes] = await Promise.all([
         fetch(`${API_BASE}/api/strategy/stats/${eventKey}/${teamNumber}`),
         fetch(`${API_BASE}/api/strategy/robot-status/${eventKey}`),
@@ -233,7 +239,6 @@ export default function App() {
       if (!statusRes.ok) throw new Error(status.error || 'Failed loading robot status');
       if (!statsRes.ok) throw new Error(stats.error || 'Failed loading team stats');
 
-      const numericTeam = Number(teamNumber);
       const matchingStat = Array.isArray(stats)
         ? stats.find((row) => Number(row.teamNumber) === numericTeam)
         : null;
@@ -242,7 +247,11 @@ export default function App() {
         ...detail,
         stat: matchingStat || detail?.stat || null
       });
-      setRobotStatus(Array.isArray(status) ? status : []);
+      setRobotStatus(
+        Array.isArray(status)
+          ? status.filter((row) => Number(row.teamNumber) === numericTeam)
+          : []
+      );
     } catch (err) {
       setError(err.message || 'Failed loading dashboard panels');
     } finally {
@@ -253,7 +262,7 @@ export default function App() {
   const loadSchedule = async () => {
     beginLoad('schedule');
     try {
-      const response = await fetch(`${API_BASE}/api/strategy/schedule/${eventKey}?team=3749`);
+      const response = await fetch(`${API_BASE}/api/strategy/schedule/${eventKey}?team=${encodeURIComponent(teamNumber)}`);
       const data = await response.json();
       if (!response.ok) {
         setError(data.error || 'Failed loading schedule');
@@ -292,6 +301,14 @@ export default function App() {
     if (/^\d+$/.test(value)) return `qm${value}`;
     if (/^(ef|qf|sf|f)\d+m?\d*$/i.test(value)) return value.toLowerCase();
     return fallback;
+  };
+
+  const resolveModeKeyForEvent = (nextEventKey) => {
+    const normalized = String(nextEventKey || '').trim().toLowerCase();
+    const knownMode = Object.entries(EVENT_MODES)
+      .filter(([modeKey]) => modeKey !== 'custom')
+      .find(([, mode]) => String(mode.eventKey || '').toLowerCase() === normalized);
+    return knownMode ? knownMode[0] : 'custom';
   };
 
   const applyEventMode = (modeKey) => {
@@ -410,6 +427,13 @@ export default function App() {
       const resolvedEventKey = data.eventKey || eventKey;
       if (resolvedEventKey !== eventKey) {
         setEventKey(resolvedEventKey);
+        setEventMode(resolveModeKeyForEvent(resolvedEventKey));
+
+        const currentSuffixRaw = String(matchKey || '').includes('_')
+          ? String(matchKey).split('_').slice(1).join('_')
+          : String(matchKey || '');
+        const nextSuffix = normalizeMatchSuffix(currentSuffixRaw, 'qm5');
+        setMatchKey(`${resolvedEventKey}_${nextSuffix}`);
       }
 
       if (data.importedMatches !== undefined) {
@@ -537,7 +561,7 @@ export default function App() {
             </div>
 
             <div className="rounded-md border border-input p-3">
-              <p className="mb-2 text-sm font-medium">Team 3749 Status</p>
+              <p className="mb-2 text-sm font-medium">Team {teamNumber} Status</p>
               <button
                 type="button"
                 role="switch"
@@ -731,7 +755,7 @@ export default function App() {
                 <Card>
                   <CardHeader>
                     <div className="flex items-center justify-between gap-3">
-                      <CardTitle className="text-base">Dynamic Match Schedule (3749)</CardTitle>
+                      <CardTitle className="text-base">Dynamic Match Schedule (Team {teamNumber})</CardTitle>
                       {isLoading('schedule') ? <LoadingChip label="Refreshing" /> : null}
                     </div>
                     <CardDescription>Auto-refreshes every 30s for {eventKey}</CardDescription>
@@ -742,7 +766,7 @@ export default function App() {
                         <thead>
                           <tr className="border-b border-input text-left text-muted-foreground">
                             <th className="p-2">Match</th>
-                            <th className="p-2">3749</th>
+                            <th className="p-2">Team {teamNumber}</th>
                             <th className="p-2">Red</th>
                             <th className="p-2">Blue</th>
                             <th className="p-2">Status</th>
@@ -752,7 +776,7 @@ export default function App() {
                           {scheduleRows.map((row) => (
                             <tr key={row.matchKey} className="border-b border-input/50 align-top">
                               <td className="p-2">{row.matchKey}</td>
-                              <td className="p-2">{row.alliance3749 || 'N/A'}</td>
+                              <td className="p-2">{row.allianceForTeam || row.alliance3749 || 'N/A'}</td>
                               <td className="p-2">{(row.redTeams || []).join(', ')}</td>
                               <td className="p-2">{(row.blueTeams || []).join(', ')}</td>
                               <td className="p-2">{row.status}</td>
@@ -905,7 +929,7 @@ export default function App() {
 
       <div className="fixed right-4 top-4 z-50">
         <Button variant="outline" className="border-input bg-card/95 shadow-lg backdrop-blur" onClick={toggleEventMode}>
-          Mode: {EVENT_MODES[eventMode]?.label || 'San Diego'}
+          Mode: {eventMode === 'custom' ? `Custom (${eventKey})` : (EVENT_MODES[eventMode]?.label || 'San Diego')}
         </Button>
       </div>
 

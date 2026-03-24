@@ -11,6 +11,10 @@ Monorepo for Team 3749 event scouting, data aggregation, and match strategy gene
 - AI Narrative: Lemonade/SmolLM integration (`packages/ai`)
 - External Data: Statbotics team-year EPA enrichment
 
+## Contributors
+
+- SlushEE0
+
 ## What Is New
 
 ### Statbotics integration (working across features)
@@ -209,6 +213,7 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
 - Aggregator: `http://localhost:2542`
 - Dashboard: `http://localhost:2543`
 - Pick Pitch Page: `http://localhost:2544`
+- Pick Pitch Page (6995): `http://localhost:2545`
 
 ## Core API Endpoints
 
