@@ -251,7 +251,7 @@ export default function App() {
             <Badge>Tablet Scouting</Badge>
           </div>
           <CardTitle>Team 3749 Tablet Scouting Form</CardTitle>
-          <CardDescription>Fuel is intentionally not tracked in this form. 2485 fuel data is handled by scraper import.</CardDescription>
+          <CardDescription>Fuel is intentionally not tracked in this form. Fuel scouting data is handled by external import.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="mb-2 flex flex-col gap-2 rounded-md border border-input p-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">

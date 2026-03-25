@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { scrapeAndImport } from '@3749/scraper/src/scrape-2485.js';
+import { scrapeAndImport } from '@3749/scraper/src/external-sync.js';
 
 const eventKey = process.argv[2] || process.env.EVENT_KEY;
 scrapeAndImport(eventKey)

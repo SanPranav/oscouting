@@ -244,7 +244,7 @@ export default function App() {
       startUrl: `${API_BASE}/api/sync/scrape-all/job`,
       loadingText: 'Refetching all events...',
       initialMessage: 'Starting global refetch job...',
-      completedMessage: (job) => `Global refetch imported ${job.importedRows || 0} rows into ${job.eventKey}`
+      completedMessage: (job) => `Global refetch imported ${job.importedRows || 0} rows`
     });
   };
 

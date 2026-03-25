@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "src/scrape-2485.js",
+  "main": "src/external-sync.js",
   "scripts": {
     "build": "echo \"scraper build not required\""
   },

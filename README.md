@@ -326,6 +326,15 @@ curl "http://localhost:2540/api/strategy/schedule/2026casnd?team=3749&refreshTba
 - Existing rows remain displayed while requests are in flight.
 - Check backend status at `/health` if requests stall.
 
+### `Refetch All` fails
+
+- External scouting sync tries multiple API paths (`/api/get-data`, `/api/getData`, `/api/data`) and then falls back to scraping `/sudo`.
+- If upstream moved domains/paths, set overrides in `.env` and restart server:
+  - `EXTERNAL_SCRAPE_API_URL=https://.../api/get-data`
+  - `EXTERNAL_SCRAPE_SUDO_URL=https://.../sudo`
+  - `EXTERNAL_SCRAPE_TIMEOUT_MS=20000`
+- Error payloads include API + HTML failure reasons to speed up diagnosis.
+
 ### Prediction says match not found
 
 - Import full schedule for the event first.

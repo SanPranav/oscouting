@@ -7,7 +7,7 @@ import scoutingRoutes from './routes/scouting.js';
 import strategyRoutes from './routes/strategy.js';
 import importRoutes from './routes/import.js';
 import { syncTbaEvent } from '@3749/tba/src/sync.js';
-import { scrapeAndImport } from '@3749/scraper/src/scrape-2485.js';
+import { scrapeAndImport } from '@3749/scraper/src/external-sync.js';
 import { recomputeExternalTeamStats } from './stats.js';
 import {
   createScrapeJob,
@@ -76,7 +76,7 @@ app.post('/api/sync/scrape/:eventKey/job', async (req, res) => {
         onProgress: (progress) => {
           updateScrapeJob(job.id, {
             stage: progress.phase || 'importing',
-            message: progress.message || 'Scraping 2485...',
+            message: progress.message || 'Syncing external scouting rows...',
             totalRows: Number(progress.totalRows || 0),
             processedRows: Number(progress.processedRows || 0),
             importedRows: Number(progress.importedRows || 0)
@@ -117,7 +117,7 @@ app.post('/api/sync/scrape-all/job', async (_req, res) => {
         onProgress: (progress) => {
           updateScrapeJob(job.id, {
             stage: progress.phase || 'importing',
-            message: progress.message || 'Scraping all 2485 rows...',
+            message: progress.message || 'Syncing all external scouting rows...',
             totalRows: Number(progress.totalRows || 0),
             processedRows: Number(progress.processedRows || 0),
             importedRows: Number(progress.importedRows || 0)

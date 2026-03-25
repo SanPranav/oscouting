@@ -25,7 +25,7 @@
     "ai:serve": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} serve --port 8080 --host localhost --no-tray'",
     "ai:status": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} status'",
     "ai:stop": "sh -c '${LEMONADE_SERVER_BIN:-$HOME/.local/bin/lemonade-server} stop'",
-    "scrape": "node scripts/scrape-2485.js",
+    "scrape": "node scripts/sync-external.js",
     "import-csv": "node scripts/import-csv.js",
     "export-csv": "node scripts/export-csv.js"
   },
