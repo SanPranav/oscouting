@@ -2,6 +2,21 @@
 
 Monorepo for Team 3749 event scouting, data aggregation, and match strategy generation.
 
+## Quick System Overview
+
+- `tablet` collects scout data.
+- `aggregator` imports/syncs event data.
+- `server` processes stats + prediction logic.
+- `dashboard` shows match predictions and tactical plans.
+- `pitch` pages are alliance-selection presentation pages.
+
+## System Documentation
+
+- Live docs page (Dashboard): [http://localhost:2543/system-guide.html](http://localhost:2543/system-guide.html)
+- Live docs page (Pitch): [http://localhost:2544/system-guide.html](http://localhost:2544/system-guide.html)
+- If you deploy the site, use the same route: `/system-guide.html`
+- Full technical reference: [docs.md](docs.md)
+
 ## Current Stack
 
 - Frontend: React + Vite (`apps/tablet`, `apps/aggregator`, `apps/dashboard`, `apps/pitch`)

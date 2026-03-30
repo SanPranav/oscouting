@@ -536,6 +536,16 @@ export default function App() {
 
   return (
     <main className="mx-auto min-h-screen max-w-[1500px] p-6 lg:p-8">
+      <div className="mb-4 flex justify-end">
+        <a
+          href="/system-guide.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center rounded-full border border-input bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent/10"
+        >
+          System Docs + Formulas
+        </a>
+      </div>
       <div className="space-y-8 pb-28">
         <Card>
           <CardHeader className="pb-4">

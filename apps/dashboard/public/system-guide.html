@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3749 System Guide</title>
+    <style>
+      :root {
+        --bg: #0b0c0f;
+        --panel: #141821;
+        --text: #e6ecff;
+        --muted: #aab7d3;
+        --line: #2a3345;
+        --accent: #53d4ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top right, #122338 0%, var(--bg) 45%);
+        color: var(--text);
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 28px 18px 48px;
+      }
+      .card {
+        background: linear-gradient(180deg, #161c27, #121721);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+      }
+      h1, h2 { margin: 0 0 10px; }
+      h1 { font-size: 2rem; letter-spacing: 0.01em; }
+      h2 { font-size: 1.2rem; margin-top: 20px; }
+      p, li { color: var(--muted); }
+      ul { margin: 8px 0 0; }
+      pre {
+        margin: 10px 0;
+        padding: 12px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #0e131c;
+        color: #d5e6ff;
+      }
+      .tag {
+        display: inline-block;
+        margin: 6px 8px 0 0;
+        padding: 5px 10px;
+        border: 1px solid #355173;
+        border-radius: 999px;
+        color: #d4ecff;
+        font-size: 0.85rem;
+      }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>System Guide + Formula Notes</h1>
+        <p>This page is the web-accessible version of the repo docs. It focuses on the exact scoring equations and why each multiplier/divider exists.</p>
+
+        <h2>Core Prediction Equation</h2>
+        <pre>teamContribution = (blendedAuto + blendedTeleop + blendedEndgame) * disablePenalty * foulPenalty
+allianceScore = sum(teamContribution for alliance teams)</pre>
+        <p>The model first estimates phase points, then scales by risk penalties. Multiplication is used because availability and foul discipline should proportionally reduce output.</p>
+
+        <h2>Why Divide by 100</h2>
+        <pre>(spiderMetric / 100) * phaseMaxPoints</pre>
+        <p>Spider values are 0-100 ratings. Dividing by 100 turns them into a 0-1 fraction, then multiplying by phase max points converts to estimated points.</p>
+
+        <h2>Blend Weights</h2>
+        <pre>blended = local * localWeight + statbotics * (1 - localWeight)</pre>
+        <p>The weights represent trust in data quality. Better local data gets higher weight; weaker local data leans toward Statbotics.</p>
+
+        <h2>Threat Score</h2>
+        <pre>threat = teleop*0.40 + cycle*0.35 + reliability*0.15 + epaSignal*0.10</pre>
+        <p>Teleop and cycle pace are weighted highest because they drive real match pressure. EPA is included as a smaller correction input.</p>
+
+        <h2>Pick and Alliance Scoring</h2>
+        <pre>pickScore = capability*0.42 + durability*0.22 + fit*0.20 + reportScore*0.16</pre>
+        <p>Capability gets the highest weight, but durability and role fit are substantial so high-risk teams do not dominate rankings.</p>
+
+        <div>
+          <span class="tag">Prediction</span>
+          <span class="tag">Tactical Threat</span>
+          <span class="tag">Pick Leaderboard</span>
+          <span class="tag">Alliance Probabilities</span>
+        </div>
+
+        <p style="margin-top:16px;">Full repo document: <a href="/docs.md">/docs.md</a> (if exposed by your host) or root file <code>docs.md</code> in the repository.</p>
+      </div>
+    </div>
+  </body>
+  </html>

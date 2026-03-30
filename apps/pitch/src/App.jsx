@@ -69,6 +69,16 @@ export default function App() {
             Team 3749 brings balanced scoring, dependable execution, and strong on-field communication.
             We are the robot you can trust in elimination pressure.
           </p>
+          <div className="mt-5">
+            <a
+              href="/system-guide.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-full border border-input bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent/10"
+            >
+              Open System Docs + Formulas
+            </a>
+          </div>
           <div className="mt-6 inline-flex items-center rounded-full border border-input bg-background px-4 py-2 text-sm">
             Pick 3749 for consistency + adaptability + endgame value
           </div>
