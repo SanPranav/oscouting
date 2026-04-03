@@ -19,6 +19,7 @@ const TBA_EVENT_TEAM_TTL_MS = 5 * 60 * 1000;
 const TBA_COMPETITION_TTL_MS = 10 * 60 * 1000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOVEMENT_OVERRIDE_PATH = path.resolve(__dirname, '../data/movement-overrides.json');
+const AUTO_OVERRIDE_PATH = path.resolve(__dirname, '../data/auto-overrides.json');
 const DEFAULT_SELECTED_COMPETITION = {
   eventKey: process.env.DEFAULT_EVENT_KEY || '2026caasv',
   name: 'Aerospace Valley',
@@ -30,6 +31,7 @@ const DEFAULT_SELECTED_COMPETITION = {
 
 let selectedCompetition = { ...DEFAULT_SELECTED_COMPETITION };
 let movementOverrideCache = null;
+let autoOverrideCache = null;
 
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 
@@ -58,6 +60,36 @@ const saveMovementOverrides = async (overrides) => {
   await fs.mkdir(folder, { recursive: true });
   await fs.writeFile(MOVEMENT_OVERRIDE_PATH, JSON.stringify(safe, null, 2), 'utf8');
   movementOverrideCache = safe;
+};
+
+const normalizeAutoDid = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['yes', 'true', '1', 'y'].includes(normalized)) return true;
+  if (['no', 'false', '0', 'n'].includes(normalized)) return false;
+  return Boolean(fallback);
+};
+
+const normalizeAutoDescription = (value) => String(value || '').trim().slice(0, 500);
+
+const loadAutoOverrides = async () => {
+  if (autoOverrideCache) return autoOverrideCache;
+  try {
+    const raw = await fs.readFile(AUTO_OVERRIDE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    autoOverrideCache = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    autoOverrideCache = {};
+  }
+  return autoOverrideCache;
+};
+
+const saveAutoOverrides = async (overrides) => {
+  const safe = overrides && typeof overrides === 'object' ? overrides : {};
+  const folder = path.dirname(AUTO_OVERRIDE_PATH);
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(AUTO_OVERRIDE_PATH, JSON.stringify(safe, null, 2), 'utf8');
+  autoOverrideCache = safe;
 };
 
 const fetchTbaRankings = async (eventKey) => {
@@ -190,6 +222,20 @@ const fetchTbaCompetitions = async (year) => {
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const parseAutoPathFromNotes = (notes) => {
+  const raw = String(notes || '').trim();
+  if (!raw) return '';
+
+  const parts = raw.split('|');
+  for (const part of parts) {
+    const [key, ...rest] = String(part || '').split('=');
+    if (String(key || '').trim().toLowerCase() !== 'auto_path') continue;
+    return rest.join('=').trim();
+  }
+
+  return '';
+};
 
 const parseEventYear = (eventKey) => {
   const match = String(eventKey || '').match(/^(\d{4})/);
@@ -958,6 +1004,7 @@ function computeAlliancePickProbabilities({ rankingRows, statsRows, lockedPicks 
 router.get('/stats/:eventKey', async (req, res) => {
   const eventKey = req.params.eventKey;
   const movementOverrides = await loadMovementOverrides();
+  const autoOverrides = await loadAutoOverrides();
 
   let data = await prisma.teamAggregatedStat.findMany({
     where: { eventKey: req.params.eventKey },
@@ -1048,12 +1095,19 @@ router.get('/stats/:eventKey', async (req, res) => {
     where: { eventKey },
     select: {
       teamNumber: true,
+      autoFuelAuto: true,
+      autoTowerClimb: true,
+      autoMobility: true,
+      autoHubShiftWon: true,
+      generalNotes: true,
+      createdAt: true,
       teleopCrossedBump: true,
       teleopCrossedTrench: true
     }
   });
 
   const movementByTeam = new Map();
+  const autoByTeam = new Map();
   for (const row of movementRows) {
     const teamNumber = Number(row.teamNumber);
     if (!teamNumber) continue;
@@ -1070,6 +1124,30 @@ router.get('/stats/:eventKey', async (req, res) => {
     agg.total += 1;
     if (row.teleopCrossedBump) agg.bumpCrosses += 1;
     if (row.teleopCrossedTrench) agg.trenchCrosses += 1;
+
+    if (!autoByTeam.has(teamNumber)) {
+      autoByTeam.set(teamNumber, {
+        autoRuns: 0,
+        latestCreatedAt: 0,
+        latestDescription: ''
+      });
+    }
+
+    const autoAgg = autoByTeam.get(teamNumber);
+    const hadAutoAction = Boolean(
+      Number(row.autoFuelAuto || 0) > 0
+      || Number(row.autoTowerClimb || 0) > 0
+      || row.autoMobility
+      || row.autoHubShiftWon
+    );
+    if (hadAutoAction) autoAgg.autoRuns += 1;
+
+    const noteAutoPath = parseAutoPathFromNotes(row.generalNotes || '');
+    const createdAtValue = new Date(row.createdAt || 0).valueOf();
+    if (noteAutoPath && createdAtValue >= autoAgg.latestCreatedAt) {
+      autoAgg.latestCreatedAt = createdAtValue;
+      autoAgg.latestDescription = noteAutoPath;
+    }
   }
 
   const teams = mergedData.map((row) => row.teamNumber);
@@ -1078,8 +1156,19 @@ router.get('/stats/:eventKey', async (req, res) => {
   const enriched = mergedData.map((row) => {
     const sb = statboticsByTeam.get(row.teamNumber);
     const movement = movementByTeam.get(row.teamNumber);
+    const auto = autoByTeam.get(row.teamNumber);
     const bumpUsed = Boolean(movement && movement.bumpCrosses > 0);
     const trenchUsed = Boolean(movement && movement.trenchCrosses > 0);
+    const autoDid = Boolean((auto && auto.autoRuns > 0) || Number(row.avgAutoTotalPoints || 0) > 0);
+    const autoDescription = auto && auto.latestDescription
+      ? auto.latestDescription
+      : '—';
+    const autoOverride = autoOverrides[movementKey(eventKey, row.teamNumber)] || null;
+    const finalAutoDid = autoOverride && Object.prototype.hasOwnProperty.call(autoOverride, 'autoDid')
+      ? normalizeAutoDid(autoOverride.autoDid, autoDid)
+      : autoDid;
+    const overrideAutoDescription = autoOverride ? normalizeAutoDescription(autoOverride.autoDescription || '') : '';
+    const finalAutoDescription = overrideAutoDescription || autoDescription;
     const movementProfile = trenchUsed && bumpUsed
       ? 'both'
       : trenchUsed
@@ -1098,6 +1187,8 @@ router.get('/stats/:eventKey', async (req, res) => {
       movementProfile: finalMovementProfile,
       trenchUsed: finalTrenchUsed,
       bumpUsed: finalBumpUsed,
+      autoDid: finalAutoDid,
+      autoDescription: finalAutoDescription,
       movementSampleSize: movement ? movement.total : 0,
       trenchCrossCount: movement ? movement.trenchCrosses : 0,
       bumpCrossCount: movement ? movement.bumpCrosses : 0,
@@ -1355,6 +1446,8 @@ router.post('/stats/:eventKey/:teamNumber/manual', async (req, res) => {
 
   const payload = req.body || {};
   const requestedMovementProfile = normalizeMovementProfile(payload.movementProfile || '');
+  const requestedAutoDid = normalizeAutoDid(payload.autoDid, false);
+  const requestedAutoDescription = normalizeAutoDescription(payload.autoDescription || '');
   const parseNumber = (value, fallback) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : fallback;
@@ -1426,10 +1519,23 @@ router.post('/stats/:eventKey/:teamNumber/manual', async (req, res) => {
     }
     await saveMovementOverrides(movementOverrides);
 
+    const autoOverrides = await loadAutoOverrides();
+    if (requestedAutoDid || requestedAutoDescription) {
+      autoOverrides[key] = {
+        autoDid: requestedAutoDid,
+        autoDescription: requestedAutoDescription
+      };
+    } else {
+      delete autoOverrides[key];
+    }
+    await saveAutoOverrides(autoOverrides);
+
     return res.json({
       ok: true,
       stat: saved,
-      movementProfile: requestedMovementProfile === 'none' ? null : requestedMovementProfile
+      movementProfile: requestedMovementProfile === 'none' ? null : requestedMovementProfile,
+      autoDid: requestedAutoDid,
+      autoDescription: requestedAutoDescription
     });
   } catch (error) {
     return res.status(500).json({

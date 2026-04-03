@@ -81,6 +81,8 @@ export default function App() {
         case 'spiderCycleSpeed': return Number(row.spiderCycleSpeed || 0);
         case 'spiderEndgame': return Number(row.spiderEndgame || 0);
         case 'movementProfile': return movementOrder[String(row.movementProfile || 'none')] ?? 0;
+        case 'autoDid': return row.autoDid ? 1 : 0;
+        case 'autoDescription': return String(row.autoDescription || '');
         case 'spiderReliability': return Number(row.spiderReliability || 0);
         case 'disableRate': return Number(row.disableRate || 0);
         case 'foulRate': return Number(row.foulRate || 0);
@@ -309,6 +311,8 @@ export default function App() {
     disableRatePct: String((Number(row.disableRate || 0) * 100).toFixed(1)),
     foulRate: String(Number(row.foulRate || 0).toFixed(2)),
     climbSuccessRatePct: String((Number(row.climbSuccessRate || 0) * 100).toFixed(1)),
+    autoDid: row.autoDid ? 'yes' : 'no',
+    autoDescription: String(row.autoDescription || ''),
     movementProfile: String(row.movementProfile || 'none'),
     notes: String(row.notes || '')
   });
@@ -373,6 +377,8 @@ export default function App() {
       disableRate: Math.max(0, Math.min(1, parse(draft.disableRatePct, Number(row.disableRate || 0) * 100) / 100)),
       foulRate: Math.max(0, parse(draft.foulRate, Number(row.foulRate || 0))),
       climbSuccessRate: Math.max(0, Math.min(1, parse(draft.climbSuccessRatePct, Number(row.climbSuccessRate || 0) * 100) / 100)),
+      autoDid: String(draft.autoDid || (row.autoDid ? 'yes' : 'no')).toLowerCase() === 'yes',
+      autoDescription: String(draft.autoDescription || '').trim(),
       movementProfile: String(draft.movementProfile || row.movementProfile || 'none').toLowerCase(),
       notes: String(draft.notes || '').trim()
     };
@@ -396,6 +402,8 @@ export default function App() {
               ...entry,
               ...payload,
               eventKey: row.eventKey || eventKey,
+              autoDid: typeof data?.autoDid === 'boolean' ? data.autoDid : payload.autoDid,
+              autoDescription: String(data?.autoDescription ?? payload.autoDescription ?? entry.autoDescription ?? ''),
               trenchUsed: payload.movementProfile === 'trench' || payload.movementProfile === 'both',
               bumpUsed: payload.movementProfile === 'bump' || payload.movementProfile === 'both',
               lastComputed: data?.stat?.lastComputed || entry.lastComputed
@@ -854,8 +862,8 @@ export default function App() {
           ) : null}
 
           {mode === MODE_MATCH ? (
-            <Table>
-              <TableHeader>
+            <Table className="w-full table-fixed text-xs">
+              <TableHeader className="[&_th]:p-1 [&_th]:align-top [&_th]:whitespace-normal [&_th]:break-words [&_button]:w-full [&_button]:justify-start [&_button]:whitespace-normal [&_button]:text-[11px]">
                 <TableRow>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('teamNumber')}>Team <span>{sortArrow('teamNumber')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('matchesScouted')}>Matches <span>{sortArrow('matchesScouted')}</span></button></TableHead>
@@ -863,6 +871,8 @@ export default function App() {
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('autoEPA')}>Auto EPA <span>{sortArrow('autoEPA')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('teleopEPA')}>Tele EPA <span>{sortArrow('teleopEPA')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('endgameEPA')}>Endgame EPA <span>{sortArrow('endgameEPA')}</span></button></TableHead>
+                  <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('autoDid')}>Auto <span>{sortArrow('autoDid')}</span></button></TableHead>
+                  <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('autoDescription')}>Auto Desc <span>{sortArrow('autoDescription')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderAuto')}>Auto <span>{sortArrow('spiderAuto')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderTeleop')}>Teleop <span>{sortArrow('spiderTeleop')}</span></button></TableHead>
                   <TableHead>Avg Auto Pts</TableHead>
@@ -880,13 +890,13 @@ export default function App() {
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&_td]:overflow-hidden [&_td]:p-1 [&_td]:align-top [&_td]:whitespace-normal [&_td]:break-words [&_td]:text-[11px]">
                 {sortedRows.map((row) => {
                   const teamNumber = Number(row.teamNumber || 0);
                   const edit = manualEdits[teamNumber] || createTeamEditDraft(row);
                   const isEditing = Boolean(editingTeams[teamNumber]);
                   const isSaving = Boolean(savingTeams[teamNumber]);
-                  const numericInputClass = 'h-8 w-20 rounded border border-input bg-background px-2 text-xs';
+                  const numericInputClass = 'h-7 w-full min-w-0 max-w-full box-border rounded border border-input bg-background px-1 text-[11px]';
 
                   return (
                     <TableRow key={`${row.eventKey}-${row.teamNumber}`}>
@@ -900,6 +910,33 @@ export default function App() {
                       <TableCell>{row.statbotics ? Number(row.statbotics.autoEPA || 0).toFixed(2) : '—'}</TableCell>
                       <TableCell>{row.statbotics ? Number(row.statbotics.teleopEPA || 0).toFixed(2) : '—'}</TableCell>
                       <TableCell>{row.statbotics ? Number(row.statbotics.endgameEPA || 0).toFixed(2) : '—'}</TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <select
+                            className="h-7 w-full min-w-0 max-w-full box-border rounded border border-input bg-background px-1 text-[11px]"
+                            value={String(edit.autoDid || 'no')}
+                            onChange={(e) => updateTeamEditField(teamNumber, 'autoDid', e.target.value)}
+                          >
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                          </select>
+                        ) : row.autoDid ? 'Yes' : 'No'}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <textarea
+                            className="h-16 w-full min-w-0 max-w-full box-border resize-y rounded border border-input bg-background px-2 py-1 text-[11px]"
+                            value={edit.autoDescription || ''}
+                            onChange={(e) => updateTeamEditField(teamNumber, 'autoDescription', e.target.value)}
+                            placeholder="Auto description..."
+                          />
+                        ) : row.autoDescription ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs leading-none text-muted-foreground" aria-label="Toggle auto description">▸</summary>
+                            <div className="mt-1 text-xs italic text-muted-foreground">{row.autoDescription}</div>
+                          </details>
+                        ) : '—'}
+                      </TableCell>
                       <TableCell>
                         {isEditing ? (
                           <input className={numericInputClass} value={edit.spiderAuto || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderAuto', e.target.value)} />
@@ -943,7 +980,7 @@ export default function App() {
                       <TableCell>
                         {isEditing ? (
                           <select
-                            className="h-8 rounded border border-input bg-background px-2 text-xs"
+                            className="h-7 w-full min-w-0 max-w-full box-border rounded border border-input bg-background px-1 text-[11px]"
                             value={String(edit.movementProfile || 'none')}
                             onChange={(e) => updateTeamEditField(teamNumber, 'movementProfile', e.target.value)}
                           >
@@ -982,14 +1019,19 @@ export default function App() {
                       </TableCell>
                       <TableCell>
                         {isEditing ? (
-                          <textarea className="h-16 w-32 rounded border border-input bg-background px-2 py-1 text-xs" value={edit.notes || ''} onChange={(e) => updateTeamEditField(teamNumber, 'notes', e.target.value)} placeholder="Add notes..." />
-                        ) : row.notes ? <span className="text-xs italic text-muted-foreground">{row.notes}</span> : '—'}
+                          <textarea className="h-16 w-full min-w-0 max-w-full box-border resize-y rounded border border-input bg-background px-2 py-1 text-[11px]" value={edit.notes || ''} onChange={(e) => updateTeamEditField(teamNumber, 'notes', e.target.value)} placeholder="Add notes..." />
+                        ) : row.notes ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs leading-none text-muted-foreground" aria-label="Toggle notes">▸</summary>
+                            <div className="mt-1 text-xs italic text-muted-foreground">{row.notes}</div>
+                          </details>
+                        ) : '—'}
                       </TableCell>
                       <TableCell>
                         {isEditing ? (
-                          <div className="flex gap-1">
-                            <Button size="sm" onClick={() => saveTeamManualStats(row)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save'}</Button>
-                            <Button size="sm" variant="outline" onClick={() => cancelEditingTeam(teamNumber)} disabled={isSaving}>Cancel</Button>
+                          <div className="flex flex-col gap-1">
+                            <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => saveTeamManualStats(row)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save'}</Button>
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => cancelEditingTeam(teamNumber)} disabled={isSaving}>Cancel</Button>
                           </div>
                         ) : (
                           <Button size="sm" variant="outline" onClick={() => startEditingTeam(row)}>Edit</Button>
