@@ -17,6 +17,135 @@ const competitionLabel = (competition) => {
 
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
 
+const splitCsvLine = (line) => {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < String(line || '').length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+};
+
+const extractTeamNumber = (value) => {
+  const match = String(value || '').match(/\b(?:frc)?(\d{2,5})\b/i);
+  if (!match) return null;
+  const teamNumber = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(teamNumber) || teamNumber <= 0) return null;
+  return teamNumber;
+};
+
+const normalizeCompetitionTeamsText = (input) => {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+
+  const addTeamNumber = (collection, value) => {
+    const parsed = extractTeamNumber(value);
+    if (parsed) collection.push(parsed);
+  };
+
+  const uniqueSorted = (items) => [...new Set(items)].sort((a, b) => a - b);
+
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw);
+      const teams = [];
+      const rows = Array.isArray(parsed)
+        ? parsed
+        : (Array.isArray(parsed?.teams) ? parsed.teams : []);
+
+      for (const row of rows) {
+        if (typeof row === 'number' || typeof row === 'string') {
+          addTeamNumber(teams, row);
+          continue;
+        }
+        if (row && typeof row === 'object') {
+          addTeamNumber(teams, row.team_number ?? row.teamNumber ?? row.team ?? row.key ?? '');
+        }
+      }
+
+      const normalized = uniqueSorted(teams);
+      if (normalized.length) return normalized.join('\n');
+    } catch {
+      // If JSON parsing fails, continue with CSV/text parsing.
+    }
+  }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return '';
+
+  const csvHeader = splitCsvLine(lines[0]).map((header) => header.toLowerCase().replace(/^\uFEFF/, '').trim());
+  const teamColumnIndex = csvHeader.findIndex((header) => ['team_number', 'team number', 'teamnumber', 'team'].includes(header));
+
+  if (teamColumnIndex >= 0) {
+    const csvTeams = lines
+      .slice(1)
+      .map((line) => splitCsvLine(line)[teamColumnIndex])
+      .map((cell) => extractTeamNumber(cell))
+      .filter((teamNumber) => Number.isFinite(teamNumber));
+
+    const normalized = uniqueSorted(csvTeams);
+    if (normalized.length) return normalized.join('\n');
+  }
+
+  const firstCellTeams = lines
+    .map((line) => splitCsvLine(line)[0] || '')
+    .map((cell) => extractTeamNumber(cell))
+    .filter((teamNumber) => Number.isFinite(teamNumber));
+
+  const normalizedFirstCell = uniqueSorted(firstCellTeams);
+  if (normalizedFirstCell.length) return normalizedFirstCell.join('\n');
+
+  const freeformTeams = uniqueSorted(
+    [...raw.matchAll(/\b(?:frc)?(\d{2,5})\b/gi)]
+      .map((match) => Number.parseInt(match[1], 10))
+      .filter((teamNumber) => Number.isFinite(teamNumber) && teamNumber > 0)
+  );
+
+  if (freeformTeams.length) return freeformTeams.join('\n');
+
+  return raw;
+};
+
+const readJsonSafe = async (response) => {
+  const bodyText = await response.text();
+  if (!bodyText || !bodyText.trim()) return {};
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    return {
+      errorCode: 'E_BAD_SERVER_RESPONSE',
+      error: 'Server returned an invalid response. Confirm backend is running on port 2540.'
+    };
+  }
+};
+
 function buildSpiderMetrics(stat) {
   return [
     Number(stat?.spiderAuto || 0),
@@ -136,7 +265,7 @@ export default function App() {
   const fetchJsonWithProgress = async (url, options = {}) => {
     const response = await fetch(url, options);
     setPredictionProgress(70);
-    const data = await response.json();
+    const data = await readJsonSafe(response);
     setPredictionProgress(95);
     return { response, data };
   };
@@ -263,7 +392,7 @@ export default function App() {
     beginLoad('schedule');
     try {
       const response = await fetch(`${API_BASE}/api/strategy/schedule/${eventKey}?team=${encodeURIComponent(teamNumber)}`);
-      const data = await response.json();
+      const data = await readJsonSafe(response);
       if (!response.ok) {
         setError(data.error || 'Failed loading schedule');
         return;
@@ -280,7 +409,7 @@ export default function App() {
     beginLoad('leaderboard');
     try {
       const response = await fetch(`${API_BASE}/api/strategy/leaderboard/${eventKey}?ourTeam=${teamNumber}&limit=12`);
-      const data = await response.json();
+      const data = await readJsonSafe(response);
       if (!response.ok) {
         setError(data.error || 'Failed loading leaderboard');
         return;
@@ -309,7 +438,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(competition)
     });
-    const data = await response.json();
+    const data = await readJsonSafe(response);
     if (!response.ok) {
       throw new Error(data.errorCode ? `${data.errorCode}: ${data.error || 'Failed saving competition'}` : (data.error || 'Failed saving competition'));
     }
@@ -320,6 +449,7 @@ export default function App() {
     const nextCompetition = competition || null;
     const nextEventKey = String(nextCompetition?.eventKey || '').trim();
     if (!nextEventKey) return;
+    const normalizedTeamsText = normalizeCompetitionTeamsText(competitionTeamsText);
 
     const currentSuffixRaw = String(matchKey || '').includes('_')
       ? String(matchKey).split('_').slice(1).join('_')
@@ -337,7 +467,7 @@ export default function App() {
         matchKey: competitionMatchKey || nextMatchKey,
         year: competitionYear,
         scheduleText: competitionScheduleText,
-        teamsText: competitionTeamsText
+        teamsText: normalizedTeamsText
       });
       const resolvedCompetition = {
         eventKey: String(saved.eventKey || nextEventKey),
@@ -347,7 +477,7 @@ export default function App() {
         week: Number(saved.week || nextCompetition.week || 0),
         matchKey: String(saved.matchKey || competitionMatchKey || nextMatchKey || ''),
         scheduleText: String(saved.scheduleText || competitionScheduleText || ''),
-        teamsText: String(saved.teamsText || competitionTeamsText || ''),
+        teamsText: String(saved.teamsText || normalizedTeamsText || ''),
         startDate: String(saved.startDate || nextCompetition.startDate || ''),
         endDate: String(saved.endDate || nextCompetition.endDate || ''),
         location: String(saved.location || nextCompetition.location || ''),
@@ -364,7 +494,7 @@ export default function App() {
       setCompetitionName(String(resolvedCompetition.name || nextEventKey));
       setCompetitionMatchKey(String(resolvedCompetition.matchKey || nextMatchKey));
       setCompetitionScheduleText(String(resolvedCompetition.scheduleText || ''));
-      setCompetitionTeamsText(String(resolvedCompetition.teamsText || ''));
+      setCompetitionTeamsText(String(resolvedCompetition.teamsText || normalizedTeamsText || ''));
       setCompetitionPickerOpen(Boolean(options.keepOpen));
 
       if (allianceModalOpen) {
@@ -382,7 +512,7 @@ export default function App() {
       setCompetitionError('');
       const selectedRes = await fetch(`${API_BASE}/api/strategy/selected-event`);
 
-      const selectedData = await selectedRes.json();
+      const selectedData = await readJsonSafe(selectedRes);
 
       if (!selectedRes.ok) {
         throw new Error(selectedData.errorCode ? `${selectedData.errorCode}: ${selectedData.error || 'Failed loading selected competition'}` : (selectedData.error || 'Failed loading selected competition'));
@@ -427,7 +557,7 @@ export default function App() {
       setAllianceError('');
       setAllianceProjection(null);
       const response = await fetch(`${API_BASE}/api/strategy/alliance-probabilities/${targetEventKey}?refreshTba=true`);
-      const data = await response.json();
+      const data = await readJsonSafe(response);
       if (!response.ok) {
         setAllianceProjection(null);
         setAllianceError(data.error || 'Failed loading alliance projections');
@@ -462,7 +592,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lockedPicks: picksPayload })
       });
-      const data = await response.json();
+      const data = await readJsonSafe(response);
 
       if (!response.ok) {
         setLiveDraftProjection(null);
@@ -506,7 +636,7 @@ export default function App() {
         body: JSON.stringify({ eventKey, text: schedulePasteText, type: 'auto' })
       });
 
-      const data = await response.json();
+      const data = await readJsonSafe(response);
       if (!response.ok) {
         setImportMessage(data.error || 'Schedule import failed');
         return;
@@ -568,7 +698,7 @@ export default function App() {
         body: JSON.stringify({ question, teamNumber })
       });
 
-      const data = await response.json();
+      const data = await readJsonSafe(response);
       if (!response.ok) {
         setBrickMessages((prev) => [
           ...prev,
@@ -1155,7 +1285,7 @@ export default function App() {
                     className="min-h-36 w-full rounded-md border border-input bg-background p-3 text-sm"
                     value={competitionTeamsText}
                     onChange={(e) => setCompetitionTeamsText(e.target.value)}
-                    placeholder="Paste team list here"
+                    placeholder="Paste team list (CSV with team_number header, team numbers, or JSON array)"
                   />
                 </div>
                 <Button

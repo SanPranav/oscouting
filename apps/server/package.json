@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "sh -c 'p=${PORT:-2540}; lsof -ti :$p | xargs -r kill -9'",
+    "predev": "npm --workspace @3749/db run generate && sh -c 'p=${PORT:-2540}; lsof -ti :$p | xargs -r kill -9'",
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "build": "echo \"server build not required\""
