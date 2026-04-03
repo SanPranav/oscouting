@@ -827,11 +827,30 @@ export async function predictMatch(eventKey, matchKey, options = {}) {
       continue;
     }
 
+    const hasObservedMatches = Number(merged.matchesScouted || 0) > 0;
+    const hasObservedPointAverages = hasPointAverages(merged);
+    const shouldPreferStatboticsOnly = !hasObservedMatches && !hasObservedPointAverages;
+
+    if (shouldPreferStatboticsOnly) {
+      const statboticsOnly = buildStatFromStatbotics(teamNumber, statbotics);
+      if (statboticsOnly) {
+        effectiveByTeam.set(teamNumber, statboticsOnly);
+        teamDataSource.set(teamNumber, 'statbotics_only');
+        continue;
+      }
+    }
+
     if (hasPointAverages(merged) || hasScoringSignal(merged)) {
       effectiveByTeam.set(teamNumber, merged);
       teamDataSource.set(teamNumber, getTeamDataSource(existing, merged));
     } else {
-      teamDataSource.set(teamNumber, 'none');
+      const statboticsOnly = buildStatFromStatbotics(teamNumber, statbotics);
+      if (statboticsOnly) {
+        effectiveByTeam.set(teamNumber, statboticsOnly);
+        teamDataSource.set(teamNumber, 'statbotics_only');
+      } else {
+        teamDataSource.set(teamNumber, 'none');
+      }
     }
   }
 

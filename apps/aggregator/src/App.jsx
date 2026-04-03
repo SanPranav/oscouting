@@ -34,6 +34,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState('Loading data...');
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [editingTeams, setEditingTeams] = useState({});
+  const [manualEdits, setManualEdits] = useState({});
+  const [savingTeams, setSavingTeams] = useState({});
   const sharedSelectionSnapshotRef = useRef('');
   const consecutiveSyncFailuresRef = useRef(0);
   const lastSyncFailureMessageRef = useRef('');
@@ -82,6 +85,7 @@ export default function App() {
         case 'disableRate': return Number(row.disableRate || 0);
         case 'foulRate': return Number(row.foulRate || 0);
         case 'climbSuccessRate': return Number(row.climbSuccessRate || 0);
+        case 'notes': return String(row.notes || '');
         default: return 0;
       }
     };
@@ -288,6 +292,126 @@ export default function App() {
       setMessage('E_SERVER_UNREACHABLE: backend request failed');
     } finally {
       if (!silent) stopLoading();
+    }
+  };
+
+  const createTeamEditDraft = (row) => ({
+    matchesScouted: String(Number(row.matchesScouted || 0)),
+    avgAutoTotalPoints: String(Number(row.avgAutoTotalPoints || 0).toFixed(2)),
+    avgTeleopTotalPoints: String(Number(row.avgTeleopTotalPoints || 0).toFixed(2)),
+    avgEndgamePoints: String(Number(row.avgEndgamePoints || 0).toFixed(2)),
+    spiderAuto: String(Number(row.spiderAuto || 0).toFixed(1)),
+    spiderTeleop: String(Number(row.spiderTeleop || 0).toFixed(1)),
+    spiderDefense: String(Number(row.spiderDefense || 0).toFixed(1)),
+    spiderCycleSpeed: String(Number(row.spiderCycleSpeed || 0).toFixed(1)),
+    spiderEndgame: String(Number(row.spiderEndgame || 0).toFixed(1)),
+    spiderReliability: String(Number(row.spiderReliability || 0).toFixed(1)),
+    disableRatePct: String((Number(row.disableRate || 0) * 100).toFixed(1)),
+    foulRate: String(Number(row.foulRate || 0).toFixed(2)),
+    climbSuccessRatePct: String((Number(row.climbSuccessRate || 0) * 100).toFixed(1)),
+    movementProfile: String(row.movementProfile || 'none'),
+    notes: String(row.notes || '')
+  });
+
+  const startEditingTeam = (row) => {
+    const teamNumber = Number(row.teamNumber || 0);
+    if (!teamNumber) return;
+
+    setManualEdits((prev) => ({
+      ...prev,
+      [teamNumber]: prev[teamNumber] || createTeamEditDraft(row)
+    }));
+    setEditingTeams((prev) => ({ ...prev, [teamNumber]: true }));
+  };
+
+  const cancelEditingTeam = (teamNumber) => {
+    setEditingTeams((prev) => {
+      const next = { ...prev };
+      delete next[teamNumber];
+      return next;
+    });
+    setManualEdits((prev) => {
+      const next = { ...prev };
+      delete next[teamNumber];
+      return next;
+    });
+  };
+
+  const updateTeamEditField = (teamNumber, field, value) => {
+    setManualEdits((prev) => ({
+      ...prev,
+      [teamNumber]: {
+        ...(prev[teamNumber] || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const saveTeamManualStats = async (row) => {
+    const teamNumber = Number(row.teamNumber || 0);
+    if (!teamNumber) return;
+
+    const draft = manualEdits[teamNumber];
+    if (!draft) return;
+
+    const parse = (value, fallback = 0) => {
+      const numeric = Number.parseFloat(String(value ?? '').trim());
+      return Number.isFinite(numeric) ? numeric : fallback;
+    };
+
+    const payload = {
+      matchesScouted: Math.max(0, Math.round(parse(draft.matchesScouted, Number(row.matchesScouted || 0)))),
+      avgAutoTotalPoints: Math.max(0, parse(draft.avgAutoTotalPoints, Number(row.avgAutoTotalPoints || 0))),
+      avgTeleopTotalPoints: Math.max(0, parse(draft.avgTeleopTotalPoints, Number(row.avgTeleopTotalPoints || 0))),
+      avgEndgamePoints: Math.max(0, parse(draft.avgEndgamePoints, Number(row.avgEndgamePoints || 0))),
+      spiderAuto: Math.max(0, Math.min(100, parse(draft.spiderAuto, Number(row.spiderAuto || 0)))),
+      spiderTeleop: Math.max(0, Math.min(100, parse(draft.spiderTeleop, Number(row.spiderTeleop || 0)))),
+      spiderDefense: Math.max(0, Math.min(100, parse(draft.spiderDefense, Number(row.spiderDefense || 0)))),
+      spiderCycleSpeed: Math.max(0, Math.min(100, parse(draft.spiderCycleSpeed, Number(row.spiderCycleSpeed || 0)))),
+      spiderEndgame: Math.max(0, Math.min(100, parse(draft.spiderEndgame, Number(row.spiderEndgame || 0)))),
+      spiderReliability: Math.max(0, Math.min(100, parse(draft.spiderReliability, Number(row.spiderReliability || 0)))),
+      disableRate: Math.max(0, Math.min(1, parse(draft.disableRatePct, Number(row.disableRate || 0) * 100) / 100)),
+      foulRate: Math.max(0, parse(draft.foulRate, Number(row.foulRate || 0))),
+      climbSuccessRate: Math.max(0, Math.min(1, parse(draft.climbSuccessRatePct, Number(row.climbSuccessRate || 0) * 100) / 100)),
+      movementProfile: String(draft.movementProfile || row.movementProfile || 'none').toLowerCase(),
+      notes: String(draft.notes || '').trim()
+    };
+
+    setSavingTeams((prev) => ({ ...prev, [teamNumber]: true }));
+    try {
+      const response = await fetch(`${API_BASE}/api/strategy/stats/${encodeURIComponent(row.eventKey || eventKey)}/${teamNumber}/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(data.error || 'Failed saving manual stats');
+        return;
+      }
+
+      setRows((prev) => prev.map((entry) => (
+        Number(entry.teamNumber) === teamNumber
+          ? {
+              ...entry,
+              ...payload,
+              eventKey: row.eventKey || eventKey,
+              trenchUsed: payload.movementProfile === 'trench' || payload.movementProfile === 'both',
+              bumpUsed: payload.movementProfile === 'bump' || payload.movementProfile === 'both',
+              lastComputed: data?.stat?.lastComputed || entry.lastComputed
+            }
+          : entry
+      )));
+      setMessage(`Saved manual stats for Team ${teamNumber}.`);
+      cancelEditingTeam(teamNumber);
+    } catch {
+      setMessage('E_SERVER_UNREACHABLE: failed saving manual stats');
+    } finally {
+      setSavingTeams((prev) => {
+        const next = { ...prev };
+        delete next[teamNumber];
+        return next;
+      });
     }
   };
 
@@ -741,6 +865,9 @@ export default function App() {
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('endgameEPA')}>Endgame EPA <span>{sortArrow('endgameEPA')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderAuto')}>Auto <span>{sortArrow('spiderAuto')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderTeleop')}>Teleop <span>{sortArrow('spiderTeleop')}</span></button></TableHead>
+                  <TableHead>Avg Auto Pts</TableHead>
+                  <TableHead>Avg Tele Pts</TableHead>
+                  <TableHead>Avg End Pts</TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderDefense')}>Defense <span>{sortArrow('spiderDefense')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderCycleSpeed')}>Cycle <span>{sortArrow('spiderCycleSpeed')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('spiderEndgame')}>Endgame <span>{sortArrow('spiderEndgame')}</span></button></TableHead>
@@ -749,37 +876,128 @@ export default function App() {
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('disableRate')}>Disable% <span>{sortArrow('disableRate')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('foulRate')}>Foul Rate <span>{sortArrow('foulRate')}</span></button></TableHead>
                   <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('climbSuccessRate')}>Climb % <span>{sortArrow('climbSuccessRate')}</span></button></TableHead>
+                  <TableHead><button type="button" className="inline-flex items-center gap-1" onClick={() => onSort('notes')}>Notes <span>{sortArrow('notes')}</span></button></TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedRows.map((row) => (
-                  <TableRow key={`${row.eventKey}-${row.teamNumber}`}>
-                    <TableCell>{row.teamNumber}</TableCell>
-                    <TableCell>{row.matchesScouted}</TableCell>
-                    <TableCell>{row.statbotics ? Number(row.statbotics.epa || 0).toFixed(2) : '—'}</TableCell>
-                    <TableCell>{row.statbotics ? Number(row.statbotics.autoEPA || 0).toFixed(2) : '—'}</TableCell>
-                    <TableCell>{row.statbotics ? Number(row.statbotics.teleopEPA || 0).toFixed(2) : '—'}</TableCell>
-                    <TableCell>{row.statbotics ? Number(row.statbotics.endgameEPA || 0).toFixed(2) : '—'}</TableCell>
-                    <TableCell>{Number(row.spiderAuto || 0).toFixed(1)}</TableCell>
-                    <TableCell>{Number(row.spiderTeleop || 0).toFixed(1)}</TableCell>
-                    <TableCell>{Number(row.spiderDefense || 0).toFixed(1)}</TableCell>
-                    <TableCell>{Number(row.spiderCycleSpeed || 0).toFixed(1)}</TableCell>
-                    <TableCell>{Number(row.spiderEndgame || 0).toFixed(1)}</TableCell>
-                    <TableCell>
-                      {row.movementProfile === 'both'
-                        ? 'Both'
-                        : row.movementProfile === 'trench'
-                          ? 'Trench'
-                          : row.movementProfile === 'bump'
-                            ? 'Bump'
-                            : '—'}
-                    </TableCell>
-                    <TableCell>{Number(row.spiderReliability || 0).toFixed(1)}</TableCell>
-                    <TableCell>{(Number(row.disableRate || 0) * 100).toFixed(1)}</TableCell>
-                    <TableCell>{Number(row.foulRate || 0).toFixed(2)}</TableCell>
-                    <TableCell>{(Number(row.climbSuccessRate || 0) * 100).toFixed(1)}</TableCell>
-                  </TableRow>
-                ))}
+                {sortedRows.map((row) => {
+                  const teamNumber = Number(row.teamNumber || 0);
+                  const edit = manualEdits[teamNumber] || createTeamEditDraft(row);
+                  const isEditing = Boolean(editingTeams[teamNumber]);
+                  const isSaving = Boolean(savingTeams[teamNumber]);
+                  const numericInputClass = 'h-8 w-20 rounded border border-input bg-background px-2 text-xs';
+
+                  return (
+                    <TableRow key={`${row.eventKey}-${row.teamNumber}`}>
+                      <TableCell>{row.teamNumber}</TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.matchesScouted || ''} onChange={(e) => updateTeamEditField(teamNumber, 'matchesScouted', e.target.value)} />
+                        ) : row.matchesScouted}
+                      </TableCell>
+                      <TableCell>{row.statbotics ? Number(row.statbotics.epa || 0).toFixed(2) : '—'}</TableCell>
+                      <TableCell>{row.statbotics ? Number(row.statbotics.autoEPA || 0).toFixed(2) : '—'}</TableCell>
+                      <TableCell>{row.statbotics ? Number(row.statbotics.teleopEPA || 0).toFixed(2) : '—'}</TableCell>
+                      <TableCell>{row.statbotics ? Number(row.statbotics.endgameEPA || 0).toFixed(2) : '—'}</TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderAuto || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderAuto', e.target.value)} />
+                        ) : Number(row.spiderAuto || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderTeleop || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderTeleop', e.target.value)} />
+                        ) : Number(row.spiderTeleop || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.avgAutoTotalPoints || ''} onChange={(e) => updateTeamEditField(teamNumber, 'avgAutoTotalPoints', e.target.value)} />
+                        ) : Number(row.avgAutoTotalPoints || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.avgTeleopTotalPoints || ''} onChange={(e) => updateTeamEditField(teamNumber, 'avgTeleopTotalPoints', e.target.value)} />
+                        ) : Number(row.avgTeleopTotalPoints || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.avgEndgamePoints || ''} onChange={(e) => updateTeamEditField(teamNumber, 'avgEndgamePoints', e.target.value)} />
+                        ) : Number(row.avgEndgamePoints || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderDefense || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderDefense', e.target.value)} />
+                        ) : Number(row.spiderDefense || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderCycleSpeed || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderCycleSpeed', e.target.value)} />
+                        ) : Number(row.spiderCycleSpeed || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderEndgame || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderEndgame', e.target.value)} />
+                        ) : Number(row.spiderEndgame || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <select
+                            className="h-8 rounded border border-input bg-background px-2 text-xs"
+                            value={String(edit.movementProfile || 'none')}
+                            onChange={(e) => updateTeamEditField(teamNumber, 'movementProfile', e.target.value)}
+                          >
+                            <option value="none">None</option>
+                            <option value="trench">Trench</option>
+                            <option value="bump">Bump</option>
+                            <option value="both">Both</option>
+                          </select>
+                        ) : row.movementProfile === 'both'
+                          ? 'Both'
+                          : row.movementProfile === 'trench'
+                            ? 'Trench'
+                            : row.movementProfile === 'bump'
+                              ? 'Bump'
+                              : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.spiderReliability || ''} onChange={(e) => updateTeamEditField(teamNumber, 'spiderReliability', e.target.value)} />
+                        ) : Number(row.spiderReliability || 0).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.disableRatePct || ''} onChange={(e) => updateTeamEditField(teamNumber, 'disableRatePct', e.target.value)} />
+                        ) : (Number(row.disableRate || 0) * 100).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.foulRate || ''} onChange={(e) => updateTeamEditField(teamNumber, 'foulRate', e.target.value)} />
+                        ) : Number(row.foulRate || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <input className={numericInputClass} value={edit.climbSuccessRatePct || ''} onChange={(e) => updateTeamEditField(teamNumber, 'climbSuccessRatePct', e.target.value)} />
+                        ) : (Number(row.climbSuccessRate || 0) * 100).toFixed(1)}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <textarea className="h-16 w-32 rounded border border-input bg-background px-2 py-1 text-xs" value={edit.notes || ''} onChange={(e) => updateTeamEditField(teamNumber, 'notes', e.target.value)} placeholder="Add notes..." />
+                        ) : row.notes ? <span className="text-xs italic text-muted-foreground">{row.notes}</span> : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <div className="flex gap-1">
+                            <Button size="sm" onClick={() => saveTeamManualStats(row)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save'}</Button>
+                            <Button size="sm" variant="outline" onClick={() => cancelEditingTeam(teamNumber)} disabled={isSaving}>Cancel</Button>
+                          </div>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={() => startEditingTeam(row)}>Edit</Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           ) : (

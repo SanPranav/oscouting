@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { prisma } from '@3749/db/src/client.js';
 import { predictMatch } from '@3749/prediction/src/predict-match.js';
 // import { callSmolLM } from '@3749/ai/src/lemonade-client.js';
@@ -14,6 +17,8 @@ const tbaCompetitionCache = new Map();
 const TBA_SCHEDULE_SYNC_TTL_MS = 90 * 1000;
 const TBA_EVENT_TEAM_TTL_MS = 5 * 60 * 1000;
 const TBA_COMPETITION_TTL_MS = 10 * 60 * 1000;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MOVEMENT_OVERRIDE_PATH = path.resolve(__dirname, '../data/movement-overrides.json');
 const DEFAULT_SELECTED_COMPETITION = {
   eventKey: process.env.DEFAULT_EVENT_KEY || '2026caasv',
   name: 'Aerospace Valley',
@@ -24,8 +29,36 @@ const DEFAULT_SELECTED_COMPETITION = {
 };
 
 let selectedCompetition = { ...DEFAULT_SELECTED_COMPETITION };
+let movementOverrideCache = null;
 
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
+
+const normalizeMovementProfile = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['none', 'trench', 'bump', 'both'].includes(normalized) ? normalized : 'none';
+};
+
+const movementKey = (eventKey, teamNumber) => `${String(eventKey || '').trim()}:${Number(teamNumber || 0)}`;
+
+const loadMovementOverrides = async () => {
+  if (movementOverrideCache) return movementOverrideCache;
+  try {
+    const raw = await fs.readFile(MOVEMENT_OVERRIDE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    movementOverrideCache = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    movementOverrideCache = {};
+  }
+  return movementOverrideCache;
+};
+
+const saveMovementOverrides = async (overrides) => {
+  const safe = overrides && typeof overrides === 'object' ? overrides : {};
+  const folder = path.dirname(MOVEMENT_OVERRIDE_PATH);
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(MOVEMENT_OVERRIDE_PATH, JSON.stringify(safe, null, 2), 'utf8');
+  movementOverrideCache = safe;
+};
 
 const fetchTbaRankings = async (eventKey) => {
   const key = process.env.TBA_API_KEY;
@@ -924,6 +957,7 @@ function computeAlliancePickProbabilities({ rankingRows, statsRows, lockedPicks 
 
 router.get('/stats/:eventKey', async (req, res) => {
   const eventKey = req.params.eventKey;
+  const movementOverrides = await loadMovementOverrides();
 
   let data = await prisma.teamAggregatedStat.findMany({
     where: { eventKey: req.params.eventKey },
@@ -1054,11 +1088,16 @@ router.get('/stats/:eventKey', async (req, res) => {
           ? 'bump'
           : 'none';
 
+    const overrideProfile = normalizeMovementProfile(movementOverrides[movementKey(eventKey, row.teamNumber)] || '');
+    const finalMovementProfile = overrideProfile !== 'none' ? overrideProfile : movementProfile;
+    const finalTrenchUsed = finalMovementProfile === 'trench' || finalMovementProfile === 'both';
+    const finalBumpUsed = finalMovementProfile === 'bump' || finalMovementProfile === 'both';
+
     return {
       ...row,
-      movementProfile,
-      trenchUsed,
-      bumpUsed,
+      movementProfile: finalMovementProfile,
+      trenchUsed: finalTrenchUsed,
+      bumpUsed: finalBumpUsed,
       movementSampleSize: movement ? movement.total : 0,
       trenchCrossCount: movement ? movement.trenchCrosses : 0,
       bumpCrossCount: movement ? movement.bumpCrosses : 0,
@@ -1301,6 +1340,103 @@ router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
         }
       : null
   });
+});
+
+router.post('/stats/:eventKey/:teamNumber/manual', async (req, res) => {
+  const eventKey = String(req.params.eventKey || '').trim();
+  const teamNumber = Number.parseInt(String(req.params.teamNumber || ''), 10);
+
+  if (!eventKey) {
+    return res.status(400).json({ error: 'eventKey is required' });
+  }
+  if (!Number.isFinite(teamNumber) || teamNumber <= 0) {
+    return res.status(400).json({ error: 'teamNumber is required' });
+  }
+
+  const payload = req.body || {};
+  const requestedMovementProfile = normalizeMovementProfile(payload.movementProfile || '');
+  const parseNumber = (value, fallback) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+  };
+
+  try {
+    const existing = await prisma.teamAggregatedStat.findUnique({
+      where: { eventKey_teamNumber: { eventKey, teamNumber } }
+    });
+
+    await prisma.team.upsert({
+      where: { teamNumber },
+      create: { teamNumber },
+      update: {}
+    });
+
+    const base = existing || {
+      matchesScouted: 0,
+      avgAutoTotalPoints: 0,
+      avgTeleopTotalPoints: 0,
+      avgEndgamePoints: 0,
+      climbAttemptRate: 0,
+      climbSuccessRate: 0,
+      disableRate: 0,
+      foulRate: 0,
+      spiderAuto: 0,
+      spiderTeleop: 0,
+      spiderDefense: 0,
+      spiderCycleSpeed: 0,
+      spiderReliability: 0,
+      spiderEndgame: 0
+    };
+
+    const updateData = {
+      matchesScouted: Math.max(0, Math.round(parseNumber(payload.matchesScouted, Number(base.matchesScouted || 0)))),
+      avgAutoTotalPoints: Math.max(0, parseNumber(payload.avgAutoTotalPoints, Number(base.avgAutoTotalPoints || 0))),
+      avgTeleopTotalPoints: Math.max(0, parseNumber(payload.avgTeleopTotalPoints, Number(base.avgTeleopTotalPoints || 0))),
+      avgEndgamePoints: Math.max(0, parseNumber(payload.avgEndgamePoints, Number(base.avgEndgamePoints || 0))),
+      climbAttemptRate: clamp(parseNumber(payload.climbAttemptRate, Number(base.climbAttemptRate || 0)), 0, 1),
+      climbSuccessRate: clamp(parseNumber(payload.climbSuccessRate, Number(base.climbSuccessRate || 0)), 0, 1),
+      disableRate: clamp(parseNumber(payload.disableRate, Number(base.disableRate || 0)), 0, 1),
+      foulRate: Math.max(0, parseNumber(payload.foulRate, Number(base.foulRate || 0))),
+      spiderAuto: clamp(parseNumber(payload.spiderAuto, Number(base.spiderAuto || 0)), 0, 100),
+      spiderTeleop: clamp(parseNumber(payload.spiderTeleop, Number(base.spiderTeleop || 0)), 0, 100),
+      spiderDefense: clamp(parseNumber(payload.spiderDefense, Number(base.spiderDefense || 0)), 0, 100),
+      spiderCycleSpeed: clamp(parseNumber(payload.spiderCycleSpeed, Number(base.spiderCycleSpeed || 0)), 0, 100),
+      spiderReliability: clamp(parseNumber(payload.spiderReliability, Number(base.spiderReliability || 0)), 0, 100),
+      spiderEndgame: clamp(parseNumber(payload.spiderEndgame, Number(base.spiderEndgame || 0)), 0, 100),
+      notes: String(payload.notes || base.notes || '').trim(),
+      lastComputed: new Date()
+    };
+
+    const saved = await prisma.teamAggregatedStat.upsert({
+      where: { eventKey_teamNumber: { eventKey, teamNumber } },
+      create: {
+        eventKey,
+        teamNumber,
+        ...updateData
+      },
+      update: updateData
+    });
+
+    const movementOverrides = await loadMovementOverrides();
+    const key = movementKey(eventKey, teamNumber);
+    if (requestedMovementProfile && requestedMovementProfile !== 'none') {
+      movementOverrides[key] = requestedMovementProfile;
+    } else {
+      delete movementOverrides[key];
+    }
+    await saveMovementOverrides(movementOverrides);
+
+    return res.json({
+      ok: true,
+      stat: saved,
+      movementProfile: requestedMovementProfile === 'none' ? null : requestedMovementProfile
+    });
+  } catch (error) {
+    return res.status(500).json({
+      errorCode: 'E_MANUAL_STAT_UPDATE_FAILED',
+      error: error.message || 'Failed to save manual stat edits'
+    });
+  }
 });
 
 router.get('/statbotics/:eventKey', async (req, res) => {

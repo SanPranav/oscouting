@@ -198,6 +198,7 @@ model TeamAggregatedStat {
   spiderCycleSpeed      Float?   @map("spider_cycle_speed")
   spiderReliability     Float?   @map("spider_reliability")
   spiderEndgame         Float?   @map("spider_endgame")
+  notes                 String?  @map("notes")
   lastComputed          DateTime @default(now()) @map("last_computed")
   createdAt             DateTime @default(now()) @map("created_at")
 
