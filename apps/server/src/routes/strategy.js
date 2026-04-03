@@ -5,10 +5,25 @@ import { predictMatch } from '@3749/prediction/src/predict-match.js';
 import { syncTbaEvent } from '@3749/tba/src/sync.js';
 import { recomputeExternalTeamStats } from '../stats.js';
 import { fetchStatboticsByTeams, fetchStatboticsTeamYear } from '../services/statbotics.js';
+import { fetchCaDistrictTop48Snapshot } from '../services/ca-district.js';
 
 const router = Router();
 const tbaScheduleSyncState = new Map();
+const tbaEventTeamCache = new Map();
+const tbaCompetitionCache = new Map();
 const TBA_SCHEDULE_SYNC_TTL_MS = 90 * 1000;
+const TBA_EVENT_TEAM_TTL_MS = 5 * 60 * 1000;
+const TBA_COMPETITION_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_SELECTED_COMPETITION = {
+  eventKey: process.env.DEFAULT_EVENT_KEY || '2026caasv',
+  name: 'Aerospace Valley',
+  shortName: 'Aerospace Valley',
+  matchKey: '',
+  scheduleText: '',
+  teamsText: ''
+};
+
+let selectedCompetition = { ...DEFAULT_SELECTED_COMPETITION };
 
 const TBA_BASE = 'https://www.thebluealliance.com/api/v3';
 
@@ -57,7 +72,324 @@ const fetchTbaRankings = async (eventKey) => {
   });
 };
 
+const fetchTbaEventTeamNumbers = async (eventKey) => {
+  const key = process.env.TBA_API_KEY;
+  if (!key) throw new Error('TBA_API_KEY missing');
+
+  const cacheKey = String(eventKey || '');
+  const now = Date.now();
+  const cached = tbaEventTeamCache.get(cacheKey);
+  if (cached && now - cached.at < TBA_EVENT_TEAM_TTL_MS) {
+    return cached.teams;
+  }
+
+  const response = await fetch(`${TBA_BASE}/event/${eventKey}/teams`, {
+    headers: { 'X-TBA-Auth-Key': key }
+  });
+  if (!response.ok) throw new Error(`TBA teams request failed: ${response.status}`);
+
+  const teams = await response.json();
+  const teamNumbers = [...new Set(
+    (Array.isArray(teams) ? teams : [])
+      .map((team) => Number(team.team_number))
+      .filter((teamNumber) => Number.isFinite(teamNumber) && teamNumber > 0)
+  )].sort((a, b) => a - b);
+
+  tbaEventTeamCache.set(cacheKey, { at: now, teams: teamNumbers });
+  return teamNumbers;
+};
+
+const fetchTbaCompetitions = async (year) => {
+  const key = process.env.TBA_API_KEY;
+  if (!key) throw new Error('TBA_API_KEY missing');
+
+  const normalizedYear = Number.parseInt(year, 10);
+  if (!Number.isFinite(normalizedYear)) {
+    throw new Error('Competition year is required');
+  }
+
+  const cacheKey = String(normalizedYear);
+  const now = Date.now();
+  const cached = tbaCompetitionCache.get(cacheKey);
+  if (cached && now - cached.at < TBA_COMPETITION_TTL_MS) {
+    return cached.events;
+  }
+
+  const response = await fetch(`${TBA_BASE}/events/${normalizedYear}`, {
+    headers: { 'X-TBA-Auth-Key': key }
+  });
+  if (!response.ok) throw new Error(`TBA events request failed: ${response.status}`);
+
+  const events = await response.json();
+  const competitions = (Array.isArray(events) ? events : [])
+    .map((event) => {
+      const city = String(event.city || '').trim();
+      const stateProv = String(event.state_prov || '').trim();
+      const country = String(event.country || '').trim();
+      const location = [city, stateProv, country].filter(Boolean).join(', ');
+      const name = String(event.name || event.short_name || event.key || '').trim();
+      return {
+        eventKey: String(event.key || '').trim(),
+        name: name || String(event.key || '').trim(),
+        shortName: String(event.short_name || '').trim(),
+        year: normalizedYear,
+        week: Number(event.week || 0),
+        startDate: String(event.start_date || '').trim(),
+        endDate: String(event.end_date || '').trim(),
+        location,
+        city,
+        stateProv,
+        country,
+        eventType: Number(event.event_type || 0),
+        districtName: String(event.district?.display_name || '').trim(),
+        districtAbbreviation: String(event.district?.abbreviation || '').trim()
+      };
+    })
+    .filter((event) => event.eventKey)
+    .sort((a, b) => {
+      const aKey = `${a.startDate || ''} ${a.name || ''} ${a.eventKey || ''}`.toLowerCase();
+      const bKey = `${b.startDate || ''} ${b.name || ''} ${b.eventKey || ''}`.toLowerCase();
+      return aKey.localeCompare(bKey);
+    });
+
+  tbaCompetitionCache.set(cacheKey, { at: now, events: competitions });
+  return competitions;
+};
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const parseEventYear = (eventKey) => {
+  const match = String(eventKey || '').match(/^(\d{4})/);
+  const year = Number.parseInt(match?.[1] || '', 10);
+  return Number.isFinite(year) ? year : new Date().getFullYear();
+};
+
+const isCaCmpEvent = (eventKey) => /cascmp/i.test(String(eventKey || ''));
+
+const splitCsvLine = (line) => {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+};
+
+const extractTeamNumber = (value) => {
+  const match = String(value || '').match(/\b(?:frc)?(\d{2,5})\b/i);
+  if (!match) return null;
+  const teamNumber = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(teamNumber) || teamNumber <= 0) return null;
+  return teamNumber;
+};
+
+const parseTeamsFromText = (text) => {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  const csvHeader = splitCsvLine(lines[0]).map((header) => header.toLowerCase());
+  const teamColumnIndex = csvHeader.findIndex((header) => ['team_number', 'team number', 'teamnumber', 'team'].includes(header));
+
+  if (teamColumnIndex >= 0) {
+    const csvTeams = lines
+      .slice(1)
+      .map((line) => splitCsvLine(line)[teamColumnIndex])
+      .map((cell) => extractTeamNumber(cell))
+      .filter((teamNumber) => Number.isFinite(teamNumber));
+
+    if (csvTeams.length) {
+      return [...new Set(csvTeams)].sort((a, b) => a - b);
+    }
+  }
+
+  const lineTeams = lines
+    .map((line) => {
+      const firstCell = splitCsvLine(line)[0] || '';
+      return extractTeamNumber(firstCell);
+    })
+    .filter((teamNumber) => Number.isFinite(teamNumber));
+
+  if (lineTeams.length) {
+    return [...new Set(lineTeams)].sort((a, b) => a - b);
+  }
+
+  const freeformTeams = [...raw.matchAll(/\b(?:frc)?(\d{2,5})\b/gi)]
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((teamNumber) => Number.isFinite(teamNumber) && teamNumber > 0);
+
+  return [...new Set(freeformTeams)].sort((a, b) => a - b);
+};
+
+const getCompetitionTeamNumbers = () => parseTeamsFromText(getSelectedCompetition().teamsText);
+
+const getLatestHistoricalTeamStats = async (teamNumbers) => {
+  const uniqueTeamNumbers = [...new Set((teamNumbers || []).map((teamNumber) => Number(teamNumber)).filter((teamNumber) => Number.isFinite(teamNumber) && teamNumber > 0))];
+  if (!uniqueTeamNumbers.length) return [];
+
+  const rows = await prisma.teamAggregatedStat.findMany({
+    where: { teamNumber: { in: uniqueTeamNumbers } },
+    orderBy: [{ lastComputed: 'desc' }, { createdAt: 'desc' }, { eventKey: 'desc' }, { teamNumber: 'asc' }]
+  });
+
+  const byTeam = new Map();
+  for (const row of rows) {
+    const teamNumber = Number(row.teamNumber);
+    if (!teamNumber || byTeam.has(teamNumber)) continue;
+    byTeam.set(teamNumber, row);
+  }
+
+  return uniqueTeamNumbers.map((teamNumber) => byTeam.get(teamNumber) || buildBaselineTeamStatRow(getSelectedCompetition().eventKey, teamNumber));
+};
+
+const getSelectedCompetition = () => selectedCompetition || { ...DEFAULT_SELECTED_COMPETITION };
+
+const setSelectedCompetition = async (competition) => {
+  const eventKey = String(competition?.eventKey || '').trim();
+  if (!eventKey) {
+    throw new Error('eventKey is required');
+  }
+
+  const name = String(competition?.name || competition?.shortName || eventKey).trim() || eventKey;
+  const year = Number.parseInt(competition?.year || parseEventYear(eventKey), 10);
+  selectedCompetition = {
+    eventKey,
+    name,
+    shortName: String(competition?.shortName || name || eventKey).trim() || name,
+    matchKey: String(competition?.matchKey || '').trim(),
+    scheduleText: String(competition?.scheduleText || '').trim(),
+    teamsText: String(competition?.teamsText || '').trim(),
+    year: Number.isFinite(year) ? year : parseEventYear(eventKey),
+    week: Number(competition?.week || 0),
+    startDate: String(competition?.startDate || '').trim(),
+    endDate: String(competition?.endDate || '').trim(),
+    location: String(competition?.location || '').trim(),
+    city: String(competition?.city || '').trim(),
+    stateProv: String(competition?.stateProv || '').trim(),
+    country: String(competition?.country || '').trim(),
+    districtName: String(competition?.districtName || '').trim(),
+    districtAbbreviation: String(competition?.districtAbbreviation || '').trim()
+  };
+
+  await prisma.event.upsert({
+    where: { eventKey },
+    create: {
+      eventKey,
+      name,
+      shortName: selectedCompetition.shortName || null,
+      city: selectedCompetition.city || null,
+      stateProv: selectedCompetition.stateProv || null,
+      country: selectedCompetition.country || null,
+      startDate: selectedCompetition.startDate ? new Date(selectedCompetition.startDate) : null,
+      endDate: selectedCompetition.endDate ? new Date(selectedCompetition.endDate) : null,
+      year: selectedCompetition.year || parseEventYear(eventKey),
+      eventType: Number.isFinite(Number(selectedCompetition.eventType)) ? Number(selectedCompetition.eventType) : null,
+      week: Number.isFinite(Number(selectedCompetition.week)) ? Number(selectedCompetition.week) : null,
+      website: null
+    },
+    update: {
+      name,
+      shortName: selectedCompetition.shortName || null,
+      city: selectedCompetition.city || null,
+      stateProv: selectedCompetition.stateProv || null,
+      country: selectedCompetition.country || null,
+      startDate: selectedCompetition.startDate ? new Date(selectedCompetition.startDate) : null,
+      endDate: selectedCompetition.endDate ? new Date(selectedCompetition.endDate) : null,
+      year: selectedCompetition.year || parseEventYear(eventKey),
+      eventType: Number.isFinite(Number(selectedCompetition.eventType)) ? Number(selectedCompetition.eventType) : null,
+      week: Number.isFinite(Number(selectedCompetition.week)) ? Number(selectedCompetition.week) : null,
+      website: null
+    }
+  });
+
+  return selectedCompetition;
+};
+
+const buildBaselineTeamStatRow = (eventKey, teamNumber) => ({
+  eventKey,
+  teamNumber,
+  matchesScouted: 0,
+  avgTeleopFuel: 0,
+  avgAutoFuel: 0,
+  avgCycleSeconds: 0,
+  avgHumanLoadSec: 0,
+  defenseStopsPerMatch: 0,
+  foulRate: 0,
+  disableRate: 0,
+  climbSuccessRate: 0,
+  notesDigest: null,
+  spiderAuto: 0,
+  spiderTeleop: 0,
+  spiderDefense: 0,
+  spiderCycleSpeed: 0,
+  spiderReliability: 0,
+  spiderEndgame: 0,
+  updatedAt: new Date(0)
+});
+
+router.get('/competitions', async (req, res) => {
+  const year = req.query.year || new Date().getFullYear();
+
+  try {
+    const competitions = await fetchTbaCompetitions(year);
+    res.json({
+      year: Number.parseInt(year, 10) || new Date().getFullYear(),
+      competitions,
+      selectedCompetition: getSelectedCompetition()
+    });
+  } catch (error) {
+    res.status(503).json({
+      errorCode: 'E_TBA_COMPETITIONS_FETCH_FAILED',
+      error: error.message || 'Unable to load TBA competitions'
+    });
+  }
+});
+
+router.get('/selected-event', (_req, res) => {
+  res.json(getSelectedCompetition());
+});
+
+router.post('/selected-event', async (req, res) => {
+  try {
+    const competition = await setSelectedCompetition(req.body || {});
+    res.json(competition);
+  } catch (error) {
+    const status = String(error.message || '').includes('required') ? 400 : 500;
+    res.status(status).json({
+      errorCode: status === 400 ? 'E_EVENT_KEY_REQUIRED' : 'E_SELECTED_COMPETITION_UPDATE_FAILED',
+      error: error.message || 'Unable to update selected competition'
+    });
+  }
+});
 
 async function maybeRefreshScheduleFromTba(eventKey, force = false) {
   const now = Date.now();
@@ -606,6 +938,20 @@ router.get('/stats/:eventKey', async (req, res) => {
     });
   }
 
+  const competitionTeamNumbers = getCompetitionTeamNumbers();
+  if (!data.length && competitionTeamNumbers.length) {
+    data = await getLatestHistoricalTeamStats(competitionTeamNumbers);
+  } else if (competitionTeamNumbers.length) {
+    const rowsByTeam = new Map(data.map((row) => [Number(row.teamNumber), row]));
+    const historicalRows = await getLatestHistoricalTeamStats(competitionTeamNumbers.filter((teamNumber) => !rowsByTeam.has(teamNumber)));
+    for (const row of historicalRows) {
+      if (!rowsByTeam.has(Number(row.teamNumber))) {
+        rowsByTeam.set(Number(row.teamNumber), row);
+      }
+    }
+    data = [...rowsByTeam.values()];
+  }
+
   const externalAggRows = await prisma.externalScoutImport.groupBy({
     by: ['teamNumber'],
     where: { eventKey, teamNumber: { not: null } },
@@ -736,6 +1082,84 @@ router.get('/stats/:eventKey', async (req, res) => {
   res.json(enriched);
 });
 
+router.get('/pit/:eventKey', async (req, res) => {
+  const eventKey = req.params.eventKey;
+  try {
+    const [reports, eventTeamNumbers] = await Promise.all([
+      prisma.pitScoutingReport.findMany({
+        where: { eventKey },
+        orderBy: [{ createdAt: 'desc' }]
+      }),
+      fetchTbaEventTeamNumbers(eventKey)
+    ]);
+
+    const teamFilter = new Set(eventTeamNumbers);
+
+    const latestByTeam = new Map();
+    for (const report of reports) {
+      if (!teamFilter.has(Number(report.teamNumber))) continue;
+      if (!latestByTeam.has(report.teamNumber)) latestByTeam.set(report.teamNumber, report);
+    }
+
+    const rows = [...latestByTeam.values()]
+      .map((report) => {
+        const tags = String(report.aiTags || '')
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean);
+
+        return {
+          eventKey: report.eventKey,
+          teamNumber: report.teamNumber,
+          scoutName: report.scoutName,
+          hopperCapacity: report.hopperCapacity ?? null,
+          drivetrainType: report.drivetrainType || 'unknown',
+          swerveModuleType: report.swerveModuleType || '',
+          swerveGearing: report.swerveGearing || '',
+          canUseTrench: Boolean(report.canUseTrench),
+          canCrossBump: Boolean(report.canCrossBump),
+          cycleBallsPerSec: Number(report.cycleBallsPerSec || 0),
+          cycleSpeed: report.cycleSpeed || 'unknown',
+          outpostCapability: Boolean(report.outpostCapability),
+          depotCapability: Boolean(report.depotCapability),
+          intakeType: report.intakeType || 'unknown',
+          shooterType: report.shooterType || 'unknown',
+          visionType: report.visionType || 'unknown',
+          autoPaths: report.autoPaths || '',
+          climberType: report.climberType || 'unknown',
+          climbCapability: report.climbCapability || 'unknown',
+          hasGroundIntake: Boolean(report.hasGroundIntake),
+          hasSourceIntake: Boolean(report.hasSourceIntake),
+          driveMotorType: report.driveMotorType || 'unknown',
+          shooterMotorType: report.shooterMotorType || 'unknown',
+          intakeMotorType: report.intakeMotorType || 'unknown',
+          climberMotorType: report.climberMotorType || 'unknown',
+          softwareFeatures: report.softwareFeatures || '',
+          mechanicalFeatures: report.mechanicalFeatures || '',
+          mechanismNotes: report.mechanismNotes || '',
+          aiTags: tags,
+          aiConfidenceScore: Number(report.aiConfidenceScore || 0),
+          updatedAt: report.updatedAt,
+          createdAt: report.createdAt
+        };
+      })
+      .sort((a, b) => a.teamNumber - b.teamNumber);
+
+    res.json({
+      eventKey,
+      filteredBy: 'tba_event_teams',
+      teamCount: teamFilter.size,
+      pitReportCount: rows.length,
+      rows
+    });
+  } catch (error) {
+    return res.status(503).json({
+      errorCode: 'E_TBA_PIT_ROSTER_FETCH_FAILED',
+      error: error.message || 'Unable to load TBA team roster for pit filtering'
+    });
+  }
+});
+
 router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
   const eventKey = req.params.eventKey;
   const teamNumber = Number(req.params.teamNumber);
@@ -743,6 +1167,9 @@ router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
   const stat = await prisma.teamAggregatedStat.findUnique({
     where: { eventKey_teamNumber: { eventKey, teamNumber } }
   });
+  const historicalStat = stat && Number(stat.matchesScouted || 0) > 0
+    ? stat
+    : (await getLatestHistoricalTeamStats([teamNumber]))[0] || null;
 
   const recent = await prisma.matchScoutingReport.findMany({
     where: { eventKey, teamNumber },
@@ -798,8 +1225,8 @@ router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
   const fallbackMatches = Math.max(reportCount, externalCount);
 
   const statForResponse = (() => {
-    const base = stat
-      ? { ...stat }
+    const base = historicalStat
+      ? { ...historicalStat, sourceEventKey: historicalStat.eventKey || eventKey, eventKey }
       : {
           eventKey,
           teamNumber,
@@ -821,7 +1248,7 @@ router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
         };
 
     const hasFallback = fallbackAuto > 0 || fallbackTele > 0 || fallbackEnd > 0;
-    if (!hasFallback) return stat;
+    if (!hasFallback) return base;
 
     const existingAuto = Number(base.avgAutoTotalPoints || 0);
     const existingTele = Number(base.avgTeleopTotalPoints || 0);
@@ -883,10 +1310,15 @@ router.get('/statbotics/:eventKey', async (req, res) => {
     select: { teamNumber: true }
   });
 
-  const teams = rows.map((row) => row.teamNumber);
+  const competitionTeamNumbers = getCompetitionTeamNumbers();
+  const teams = rows.length ? rows.map((row) => row.teamNumber) : competitionTeamNumbers;
+  const historicalRows = !rows.length && competitionTeamNumbers.length
+    ? await getLatestHistoricalTeamStats(competitionTeamNumbers)
+    : [];
+  const teamsForLookup = historicalRows.length ? historicalRows.map((row) => row.teamNumber) : teams;
   const statboticsByTeam = await fetchStatboticsByTeams(teams);
 
-  const data = teams.map((teamNumber) => {
+  const data = teamsForLookup.map((teamNumber) => {
     const sb = statboticsByTeam.get(teamNumber);
     return {
       teamNumber,
@@ -1057,8 +1489,21 @@ router.get('/leaderboard/:eventKey', async (req, res) => {
     });
   }
 
-  const [rankRows, externalRows, reportRows, statboticsByTeam] = await Promise.all([
+  const competitionTeamNumbers = getCompetitionTeamNumbers();
+
+  const [rankRows, scheduleRows, externalRows, reportRows] = await Promise.all([
     prisma.ranking.findMany({ where: { eventKey } }),
+    prisma.match.findMany({
+      where: { eventKey },
+      select: {
+        redTeam1: true,
+        redTeam2: true,
+        redTeam3: true,
+        blueTeam1: true,
+        blueTeam2: true,
+        blueTeam3: true
+      }
+    }),
     prisma.externalScoutImport.findMany({
       where: { eventKey, teamNumber: { not: null } },
       select: { teamNumber: true, epaScore: true }
@@ -1066,9 +1511,44 @@ router.get('/leaderboard/:eventKey', async (req, res) => {
     prisma.matchScoutingReport.findMany({
       where: { eventKey },
       select: { teamNumber: true, autoFuelAuto: true, teleopFuelScored: true, endgameTowerPoints: true }
-    }),
-    fetchStatboticsByTeams(rows.map((row) => row.teamNumber))
+    })
   ]);
+
+  const eventTeamNumbers = new Set();
+  for (const row of rankRows) {
+    const teamNumber = Number(row.teamNumber || 0);
+    if (teamNumber > 0) eventTeamNumbers.add(teamNumber);
+  }
+  for (const row of scheduleRows) {
+    for (const teamNumber of [row.redTeam1, row.redTeam2, row.redTeam3, row.blueTeam1, row.blueTeam2, row.blueTeam3]) {
+      const parsed = Number(teamNumber || 0);
+      if (parsed > 0) eventTeamNumbers.add(parsed);
+    }
+  }
+
+  if (!eventTeamNumbers.size && competitionTeamNumbers.length) {
+    for (const teamNumber of competitionTeamNumbers) eventTeamNumbers.add(teamNumber);
+  }
+
+  const sourceRows = eventTeamNumbers.size
+    ? rows.filter((row) => eventTeamNumbers.has(Number(row.teamNumber || 0)))
+    : rows;
+
+  const rowsByTeam = new Map(sourceRows.map((row) => [Number(row.teamNumber), row]));
+  for (const teamNumber of eventTeamNumbers) {
+    if (!rowsByTeam.has(teamNumber)) {
+      rowsByTeam.set(teamNumber, buildBaselineTeamStatRow(eventKey, teamNumber));
+    }
+  }
+  let competitionRows = [...rowsByTeam.values()];
+
+  if ((!competitionRows.length || competitionRows.every((row) => Number(row.matchesScouted || 0) === 0)) && eventTeamNumbers.size) {
+    competitionRows = await getLatestHistoricalTeamStats([...eventTeamNumbers]);
+  } else if (!competitionRows.length && competitionTeamNumbers.length) {
+    competitionRows = await getLatestHistoricalTeamStats(competitionTeamNumbers);
+  }
+
+  const statboticsByTeam = await fetchStatboticsByTeams(competitionRows.map((row) => row.teamNumber));
 
   const rankingByTeam = new Map(rankRows.map((row) => [row.teamNumber, row]));
 
@@ -1112,17 +1592,59 @@ router.get('/leaderboard/:eventKey', async (req, res) => {
     agg.endgamePointsAvg /= denom;
   }
 
-  const ranked = computePickLeaderboard(rows, ourTeam, {
+  const ranked = computePickLeaderboard(competitionRows, ourTeam, {
     rankingByTeam,
     epaByTeam,
     reportByTeam,
     statboticsByTeam
   });
+
+  let dcmpSnapshot = null;
+  if (isCaCmpEvent(eventKey)) {
+    try {
+      dcmpSnapshot = await fetchCaDistrictTop48Snapshot(parseEventYear(eventKey));
+    } catch (error) {
+      console.error(`[leaderboard] Failed to fetch CA district snapshot: ${error.message}`);
+    }
+  }
+
+  const dcmpByTeam = dcmpSnapshot?.byTeam || new Map();
+  const rankedWithDcmp = ranked.map((row) => {
+    const dcmp = dcmpByTeam.get(Number(row.teamNumber)) || null;
+    let dcmpStatus = 'N/A';
+    if (dcmp) {
+      dcmpStatus = dcmp.inTop48Percent ? 'Top 48%' : 'Outside 48%';
+    } else if (dcmpSnapshot) {
+      dcmpStatus = 'Not in CA data';
+    }
+
+    return {
+      ...row,
+      dcmpStatus,
+      dcmpRank: dcmp?.rank || null,
+      dcmpCutoffRank: dcmpSnapshot?.cutoffRank || null
+    };
+  });
+
   res.json({
     eventKey,
     ourTeam,
-    count: ranked.length,
-    leaderboard: ranked.slice(0, limit)
+    count: rankedWithDcmp.length,
+    leaderboard: rankedWithDcmp.slice(0, limit),
+    competitionFilter: {
+      eventTeamCount: eventTeamNumbers.size || competitionRows.length,
+      source: eventTeamNumbers.size ? 'rankings+schedule+history' : 'historical-stats'
+    },
+    dcmp: dcmpSnapshot
+      ? {
+          district: dcmpSnapshot.district,
+          cutoffPercent: dcmpSnapshot.cutoffPercent,
+          cutoffRank: dcmpSnapshot.cutoffRank,
+          teamCount: dcmpSnapshot.teamCount,
+          url: dcmpSnapshot.url,
+          fetchedAt: dcmpSnapshot.fetchedAt
+        }
+      : null
   });
 });
 
@@ -1386,7 +1908,7 @@ router.post('/brick-ai/:eventKey', async (req, res) => {
       : byTeleop.slice(0, 3).map((entry) => entry.teamNumber);
 
     return [
-      'Brick AI is running in fallback mode (LLM runtime unavailable), using database scouting only.',
+      'E_BRICK_AI_RUNTIME_UNAVAILABLE: database scouting only.',
       `Question: ${question}`,
       `Focus teams: ${focusTeams.length ? focusTeams.join(', ') : 'none identified'}`,
       `Top teleop: ${byTeleop.slice(0, 3).map((entry) => `${entry.teamNumber} (${entry.spiderTeleop.toFixed(1)})`).join(' | ')}`,
@@ -1396,14 +1918,13 @@ router.post('/brick-ai/:eventKey', async (req, res) => {
     ].join('\n');
   };
 
-  // Temporarily disable Brick AI model calls to avoid local Lemonade runtime usage.
   res.json({
     eventKey,
     answer: fallbackBrickAnswer(),
     teamsUsed: context.map((entry) => entry.teamNumber),
     degraded: true,
     dataScope: 'all-available-with-event-priority',
-    warning: 'Brick AI temporarily disabled'
+    warning: 'E_BRICK_AI_TEMPORARILY_DISABLED'
   });
 });
 

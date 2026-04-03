@@ -1,27 +1,18 @@
-import { useEffect, useState } from 'react';
-import { Bot, MessageCircle, Radar, Send, Sparkles, Swords, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Bot, MessageCircle, Radar, Save, Send, Settings2, Sparkles, Swords, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Input } from './components/ui/input';
 import { Badge } from './components/ui/badge';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const EVENT_MODES = {
-  sanDiego: {
-    label: 'San Diego',
-    eventKey: '2026casnd',
-    defaultMatchSuffix: 'qm5'
-  },
-  aerospaceValley: {
-    label: 'Aerospace Valley',
-    eventKey: '2026caav',
-    defaultMatchSuffix: 'qm5'
-  },
-  custom: {
-    label: 'Custom Event',
-    eventKey: '',
-    defaultMatchSuffix: 'qm5'
-  }
+const DEFAULT_EVENT_KEY = '2026caasv';
+const DEFAULT_MATCH_SUFFIX = 'qm5';
+
+const competitionLabel = (competition) => {
+  if (!competition?.eventKey) return 'Choose a competition';
+  const details = [competition.name, competition.location].filter(Boolean).join(' · ');
+  return details ? `${competition.eventKey} - ${details}` : competition.eventKey;
 };
 
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
@@ -91,10 +82,19 @@ function LoadingChip({ label }) {
 const getDraftInputKey = (allianceSeed, roundNumber) => `${Number(allianceSeed)}-${Number(roundNumber)}`;
 
 export default function App() {
-  const [eventMode, setEventMode] = useState('sanDiego');
-  const [eventKey, setEventKey] = useState('2026casnd');
-  const [matchKey, setMatchKey] = useState('2026casnd_qm5');
+  const [eventKey, setEventKey] = useState(DEFAULT_EVENT_KEY);
+  const [matchKey, setMatchKey] = useState(`${DEFAULT_EVENT_KEY}_${DEFAULT_MATCH_SUFFIX}`);
   const [teamNumber, setTeamNumber] = useState('3749');
+  const [competitionPickerOpen, setCompetitionPickerOpen] = useState(true);
+  const [competitionYear, setCompetitionYear] = useState(String(new Date().getFullYear()));
+  const [competitionLoading, setCompetitionLoading] = useState(false);
+  const [competitionError, setCompetitionError] = useState('');
+  const [selectedCompetition, setSelectedCompetition] = useState(null);
+  const [competitionReady, setCompetitionReady] = useState(false);
+  const [competitionName, setCompetitionName] = useState('Aerospace Valley');
+  const [competitionMatchKey, setCompetitionMatchKey] = useState(`${DEFAULT_EVENT_KEY}_${DEFAULT_MATCH_SUFFIX}`);
+  const [competitionScheduleText, setCompetitionScheduleText] = useState('');
+  const [competitionTeamsText, setCompetitionTeamsText] = useState('');
   const [result, setResult] = useState(null);
   const [teamDetail, setTeamDetail] = useState(null);
   const [robotStatus, setRobotStatus] = useState([]);
@@ -212,7 +212,7 @@ export default function App() {
       setPredictionProgress(100);
       setResult(data);
     } catch {
-      setError('Server unreachable. Start backend on http://localhost:2540.');
+      setError('E_SERVER_UNREACHABLE: start backend and retry');
       setResult(null);
     } finally {
       setPredictionLoading(false);
@@ -303,34 +303,122 @@ export default function App() {
     return fallback;
   };
 
-  const resolveModeKeyForEvent = (nextEventKey) => {
-    const normalized = String(nextEventKey || '').trim().toLowerCase();
-    const knownMode = Object.entries(EVENT_MODES)
-      .filter(([modeKey]) => modeKey !== 'custom')
-      .find(([, mode]) => String(mode.eventKey || '').toLowerCase() === normalized);
-    return knownMode ? knownMode[0] : 'custom';
+  const saveSelectedCompetition = async (competition) => {
+    const response = await fetch(`${API_BASE}/api/strategy/selected-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(competition)
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.errorCode ? `${data.errorCode}: ${data.error || 'Failed saving competition'}` : (data.error || 'Failed saving competition'));
+    }
+    return data;
   };
 
-  const applyEventMode = (modeKey) => {
-    const mode = EVENT_MODES[modeKey] || EVENT_MODES.sanDiego;
+  const setCompetitionSelection = async (competition, options = {}) => {
+    const nextCompetition = competition || null;
+    const nextEventKey = String(nextCompetition?.eventKey || '').trim();
+    if (!nextEventKey) return;
+
     const currentSuffixRaw = String(matchKey || '').includes('_')
       ? String(matchKey).split('_').slice(1).join('_')
       : String(matchKey || '');
-    const nextMatchSuffix = normalizeMatchSuffix(currentSuffixRaw, mode.defaultMatchSuffix);
-    const nextEventKey = mode.eventKey;
+    const nextMatchSuffix = normalizeMatchSuffix(currentSuffixRaw, DEFAULT_MATCH_SUFFIX);
+    const nextMatchKey = `${nextEventKey}_${nextMatchSuffix}`;
 
-    setEventMode(modeKey);
-    setEventKey(nextEventKey);
-    setMatchKey(`${nextEventKey}_${nextMatchSuffix}`);
+    setCompetitionLoading(true);
+    setCompetitionError('');
+    try {
+      const saved = await saveSelectedCompetition({
+        eventKey: nextEventKey,
+        name: competitionName || nextEventKey,
+        shortName: competitionName || nextEventKey,
+        matchKey: competitionMatchKey || nextMatchKey,
+        year: competitionYear,
+        scheduleText: competitionScheduleText,
+        teamsText: competitionTeamsText
+      });
+      const resolvedCompetition = {
+        eventKey: String(saved.eventKey || nextEventKey),
+        name: String(saved.name || nextCompetition.name || nextEventKey),
+        shortName: String(saved.shortName || nextCompetition.shortName || saved.name || nextEventKey),
+        year: Number(saved.year || nextCompetition.year || new Date().getFullYear()),
+        week: Number(saved.week || nextCompetition.week || 0),
+        matchKey: String(saved.matchKey || competitionMatchKey || nextMatchKey || ''),
+        scheduleText: String(saved.scheduleText || competitionScheduleText || ''),
+        teamsText: String(saved.teamsText || competitionTeamsText || ''),
+        startDate: String(saved.startDate || nextCompetition.startDate || ''),
+        endDate: String(saved.endDate || nextCompetition.endDate || ''),
+        location: String(saved.location || nextCompetition.location || ''),
+        city: String(saved.city || nextCompetition.city || ''),
+        stateProv: String(saved.stateProv || nextCompetition.stateProv || ''),
+        country: String(saved.country || nextCompetition.country || ''),
+        districtName: String(saved.districtName || nextCompetition.districtName || ''),
+        districtAbbreviation: String(saved.districtAbbreviation || nextCompetition.districtAbbreviation || '')
+      };
 
-    if (allianceModalOpen) {
-      loadAllianceProbabilities(nextEventKey);
+      setSelectedCompetition(resolvedCompetition);
+      setEventKey(nextEventKey);
+      setMatchKey(String(resolvedCompetition.matchKey || nextMatchKey));
+      setCompetitionName(String(resolvedCompetition.name || nextEventKey));
+      setCompetitionMatchKey(String(resolvedCompetition.matchKey || nextMatchKey));
+      setCompetitionScheduleText(String(resolvedCompetition.scheduleText || ''));
+      setCompetitionTeamsText(String(resolvedCompetition.teamsText || ''));
+      setCompetitionPickerOpen(Boolean(options.keepOpen));
+
+      if (allianceModalOpen) {
+        loadAllianceProbabilities(nextEventKey);
+      }
+    } catch (error) {
+      setCompetitionError(error.message || 'Failed saving competition');
+    } finally {
+      setCompetitionLoading(false);
     }
   };
 
-  const toggleEventMode = () => {
-    const nextMode = eventMode === 'sanDiego' ? 'aerospaceValley' : 'sanDiego';
-    applyEventMode(nextMode);
+  const loadCompetitionContext = async () => {
+    try {
+      setCompetitionError('');
+      const selectedRes = await fetch(`${API_BASE}/api/strategy/selected-event`);
+
+      const selectedData = await selectedRes.json();
+
+      if (!selectedRes.ok) {
+        throw new Error(selectedData.errorCode ? `${selectedData.errorCode}: ${selectedData.error || 'Failed loading selected competition'}` : (selectedData.error || 'Failed loading selected competition'));
+      }
+
+      const nextSelected = {
+        eventKey: String(selectedData.eventKey || DEFAULT_EVENT_KEY),
+        name: String(selectedData.name || selectedData.shortName || selectedData.eventKey || DEFAULT_EVENT_KEY),
+        shortName: String(selectedData.shortName || selectedData.name || selectedData.eventKey || DEFAULT_EVENT_KEY),
+        year: Number(selectedData.year || new Date().getFullYear()),
+        week: Number(selectedData.week || 0),
+        matchKey: String(selectedData.matchKey || `${String(selectedData.eventKey || DEFAULT_EVENT_KEY)}_${DEFAULT_MATCH_SUFFIX}`),
+        scheduleText: String(selectedData.scheduleText || ''),
+        teamsText: String(selectedData.teamsText || ''),
+        startDate: String(selectedData.startDate || ''),
+        endDate: String(selectedData.endDate || ''),
+        location: String(selectedData.location || ''),
+        city: String(selectedData.city || ''),
+        stateProv: String(selectedData.stateProv || ''),
+        country: String(selectedData.country || ''),
+        districtName: String(selectedData.districtName || ''),
+        districtAbbreviation: String(selectedData.districtAbbreviation || '')
+      };
+
+      setSelectedCompetition(nextSelected);
+      setEventKey(nextSelected.eventKey);
+      setMatchKey(String(nextSelected.matchKey || `${nextSelected.eventKey}_${DEFAULT_MATCH_SUFFIX}`));
+      setCompetitionName(String(nextSelected.name || nextSelected.eventKey));
+      setCompetitionMatchKey(String(nextSelected.matchKey || `${nextSelected.eventKey}_${DEFAULT_MATCH_SUFFIX}`));
+      setCompetitionScheduleText(String(nextSelected.scheduleText || ''));
+      setCompetitionTeamsText(String(nextSelected.teamsText || ''));
+    } catch (error) {
+      setCompetitionError(error.message || 'E_SELECTED_EVENT_UNAVAILABLE: Failed loading selected competition');
+    } finally {
+      setCompetitionReady(true);
+    }
   };
 
   async function loadAllianceProbabilities(targetEventKey = eventKey) {
@@ -426,13 +514,26 @@ export default function App() {
 
       const resolvedEventKey = data.eventKey || eventKey;
       if (resolvedEventKey !== eventKey) {
+        const importedCompetition = competitions.find((competition) => String(competition.eventKey || '') === String(resolvedEventKey)) || {
+          eventKey: resolvedEventKey,
+          name: resolvedEventKey
+        };
+
+        void saveSelectedCompetition(importedCompetition).then((saved) => {
+          setSelectedCompetition((prev) => ({
+            ...saved,
+            name: String(saved.name || importedCompetition.name || resolvedEventKey),
+            shortName: String(saved.shortName || importedCompetition.shortName || saved.name || resolvedEventKey)
+          }));
+          setCompetitions((prev) => mergeCompetitionIntoList(prev, saved));
+        }).catch(() => null);
+
         setEventKey(resolvedEventKey);
-        setEventMode(resolveModeKeyForEvent(resolvedEventKey));
 
         const currentSuffixRaw = String(matchKey || '').includes('_')
           ? String(matchKey).split('_').slice(1).join('_')
           : String(matchKey || '');
-        const nextSuffix = normalizeMatchSuffix(currentSuffixRaw, 'qm5');
+        const nextSuffix = normalizeMatchSuffix(currentSuffixRaw, DEFAULT_MATCH_SUFFIX);
         setMatchKey(`${resolvedEventKey}_${nextSuffix}`);
       }
 
@@ -445,7 +546,7 @@ export default function App() {
       await loadSchedule();
       await loadLeaderboard();
     } catch {
-      setImportMessage('Schedule import failed. Server unreachable.');
+      setImportMessage('E_SCHEDULE_IMPORT_SERVER_UNREACHABLE: schedule import failed');
     } finally {
       endLoad('scheduleImport');
     }
@@ -478,7 +579,7 @@ export default function App() {
 
       const answerText = String(data.answer || 'No answer returned.');
       const warningText = data.degraded && data.warning
-        ? `\n\n(Using fallback mode: ${data.warning})`
+        ? `\n\n(${data.warning})`
         : '';
 
       setBrickMessages((prev) => [
@@ -488,7 +589,7 @@ export default function App() {
     } catch {
       setBrickMessages((prev) => [
         ...prev,
-        { role: 'assistant', text: 'Brick AI is unavailable right now. Check server + model runtime.' }
+        { role: 'assistant', text: 'E_BRICK_AI_UNAVAILABLE: check server and model runtime.' }
       ]);
     } finally {
       setBrickLoading(false);
@@ -512,6 +613,12 @@ export default function App() {
   }, [brickLoading]);
 
   useEffect(() => {
+    setCompetitionPickerOpen(true);
+    loadCompetitionContext();
+  }, []);
+
+  useEffect(() => {
+    if (!competitionReady) return;
     loadSchedule();
     loadLeaderboard();
     const timer = setInterval(loadSchedule, 30000);
@@ -520,7 +627,7 @@ export default function App() {
       clearInterval(timer);
       clearInterval(leaderboardTimer);
     };
-  }, [eventKey, teamNumber]);
+  }, [competitionReady, eventKey, teamNumber]);
 
   useEffect(() => {
     if (!allianceModalOpen || !allianceProjection?.alliances?.length) return;
@@ -537,14 +644,24 @@ export default function App() {
   return (
     <main className="mx-auto min-h-screen max-w-[1500px] p-6 lg:p-8">
       <div className="mb-4 flex justify-end">
-        <a
-          href="/system-guide.html"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center rounded-full border border-input bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent/10"
-        >
-          System Docs + Formulas
-        </a>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="gap-2 border-input bg-card px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur"
+            onClick={() => setCompetitionPickerOpen(true)}
+          >
+            <Settings2 className="h-4 w-4" />
+            {selectedCompetition ? 'Change Competition' : 'Choose Competition'}
+          </Button>
+          <a
+            href="/system-guide.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-full border border-input bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent/10"
+          >
+            System Docs + Formulas
+          </a>
+        </div>
       </div>
       <div className="space-y-8 pb-28">
         <Card>
@@ -554,11 +671,20 @@ export default function App() {
               <Badge>Drive Dashboard</Badge>
             </div>
             <CardTitle>Match Prediction</CardTitle>
-            <CardDescription>Use local scouting stats plus AI narrative for strategy calls.</CardDescription>
+            <CardDescription>
+              Use local scouting stats plus AI narrative for strategy calls.
+              {selectedCompetition?.name ? ` Current competition: ${selectedCompetition.name}.` : ''}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+              <Badge className="border border-input bg-background text-foreground">Event {eventKey}</Badge>
+              <Badge className="border border-input bg-background text-foreground">
+                {selectedCompetition ? competitionLabel(selectedCompetition) : 'Choose a competition'}
+              </Badge>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <Input value={eventKey} onChange={(e) => setEventKey(e.target.value)} placeholder="event key" />
               <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match id (5, qm5, or 2026casnd_qm5)" />
               <Input value={teamNumber} onChange={(e) => setTeamNumber(e.target.value)} placeholder="team for spider/status" />
               <div className="flex gap-2">
@@ -832,6 +958,7 @@ export default function App() {
                             <th className="p-2">Capability</th>
                             <th className="p-2">Durability</th>
                             <th className="p-2">Fit</th>
+                            <th className="p-2">DCMP</th>
                             <th className="p-2">Strongest Value</th>
                             <th className="p-2">Tags</th>
                           </tr>
@@ -845,6 +972,7 @@ export default function App() {
                               <td className="p-2">{Number(row.capabilityScore || 0).toFixed(1)}</td>
                               <td className="p-2">{Number(row.durabilityScore || 0).toFixed(1)}</td>
                               <td className="p-2">{Number(row.fitScore || 0).toFixed(1)}</td>
+                              <td className="p-2">{row.dcmpStatus || 'N/A'}</td>
                               <td className="p-2">{row.strongestValue || 'Balanced profile'}</td>
                               <td className="p-2">{Array.isArray(row.tags) && row.tags.length ? row.tags.join(', ') : '—'}</td>
                             </tr>
@@ -940,10 +1068,121 @@ export default function App() {
       </div>
 
       <div className="fixed right-4 top-4 z-50">
-        <Button variant="outline" className="border-input bg-card/95 shadow-lg backdrop-blur" onClick={toggleEventMode}>
-          Mode: {eventMode === 'custom' ? `Custom (${eventKey})` : (EVENT_MODES[eventMode]?.label || 'San Diego')}
+        <Button variant="outline" className="gap-2 border-input bg-card/95 shadow-lg backdrop-blur" onClick={() => setCompetitionPickerOpen(true)}>
+          <Settings2 className="h-4 w-4" />
+          Config
         </Button>
       </div>
+
+      {competitionPickerOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <Card className="max-h-[92vh] w-full max-w-4xl overflow-hidden border-border/80 bg-card/95 shadow-xl">
+            <CardHeader className="border-b border-input">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Competition Config</CardTitle>
+                  <CardDescription>
+                    Set the shared event and paste the schedule and teams list here. The other pages will follow this config.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={loadCompetitionContext}
+                    disabled={competitionLoading}
+                  >
+                    {competitionLoading ? 'Loading...' : 'Reload Config'}
+                  </Button>
+                  <Button variant="outline" className="gap-1" onClick={() => setCompetitionPickerOpen(false)}>
+                    <X className="h-4 w-4" />
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 overflow-auto p-4">
+              {competitionError ? <p className="text-sm text-destructive">{competitionError}</p> : null}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Event Key</label>
+                  <Input
+                    value={eventKey}
+                    onChange={(e) => setEventKey(e.target.value)}
+                    placeholder="2026caasv"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Competition Name</label>
+                  <Input
+                    value={competitionName}
+                    onChange={(e) => setCompetitionName(e.target.value)}
+                    placeholder="Aerospace Valley"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Match Key</label>
+                  <Input
+                    value={competitionMatchKey}
+                    onChange={(e) => setCompetitionMatchKey(e.target.value)}
+                    placeholder={`${DEFAULT_EVENT_KEY}_${DEFAULT_MATCH_SUFFIX}`}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Event Year</label>
+                  <Input
+                    value={competitionYear}
+                    onChange={(e) => setCompetitionYear(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+                    placeholder="2026"
+                    inputMode="numeric"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-medium text-muted-foreground">Match Schedule</label>
+                  <textarea
+                    className="min-h-40 w-full rounded-md border border-input bg-background p-3 text-sm"
+                    value={competitionScheduleText}
+                    onChange={(e) => setCompetitionScheduleText(e.target.value)}
+                    placeholder="Paste schedule text here"
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="block text-xs font-medium text-muted-foreground">Teams Playing</label>
+                  <textarea
+                    className="min-h-36 w-full rounded-md border border-input bg-background p-3 text-sm"
+                    value={competitionTeamsText}
+                    onChange={(e) => setCompetitionTeamsText(e.target.value)}
+                    placeholder="Paste team list here"
+                  />
+                </div>
+                <Button
+                  className="gap-2 md:col-start-2"
+                  onClick={() => setCompetitionSelection({
+                    eventKey,
+                    name: competitionName,
+                    shortName: competitionName,
+                    matchKey: competitionMatchKey,
+                    year: competitionYear,
+                    scheduleText: competitionScheduleText,
+                    teamsText: competitionTeamsText
+                  })}
+                  disabled={competitionLoading}
+                >
+                  <Save className="h-4 w-4" />
+                  Save Config
+                </Button>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                This config is shared with the aggregator, match tablet, and pit tablet.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       {allianceModalOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">

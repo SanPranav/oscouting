@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { parse } from 'csv-parse/sync';
 import { prisma } from '@3749/db/src/client.js';
 import { normalizeMatchSubmission } from '@3749/ai/src/normalize.js';
+import { normalizePitSubmission } from '@3749/ai/src/normalize.js';
 import { callSmolLM } from '@3749/ai/src/lemonade-client.js';
 import { recomputeTeamStats } from '../stats.js';
+import { fetchStatboticsByTeams } from '../services/statbotics.js';
 
 const router = Router();
 
@@ -110,6 +112,115 @@ const parseNumericValue = (value) => {
 };
 
 const UNKNOWN_VALUE = /^(idk|unknown|n\/?a|na|null|undefined|none)?$/i;
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function buildSeedStatRow(eventKey, teamNumber, statbotics) {
+  const autoAvg = Number(statbotics?.autoEPA || 0);
+  const teleAvg = Number(statbotics?.teleopEPA || 0);
+  const endgameAvg = Number(statbotics?.endgameEPA || 0);
+  const totalGames = Number(statbotics?.wins || 0) + Number(statbotics?.losses || 0) + Number(statbotics?.ties || 0);
+  const winPct = totalGames > 0
+    ? (Number(statbotics?.wins || 0) + 0.5 * Number(statbotics?.ties || 0)) / totalGames
+    : 0.5;
+
+  return {
+    eventKey,
+    teamNumber,
+    matchesScouted: 0,
+    avgAutoTotalPoints: autoAvg,
+    avgTeleopTotalPoints: teleAvg,
+    avgEndgamePoints: endgameAvg,
+    disableRate: 0,
+    foulRate: 0,
+    climbSuccessRate: 0,
+    spiderAuto: clamp(autoAvg * 5, 0, 100),
+    spiderTeleop: clamp(teleAvg * 3, 0, 100),
+    spiderDefense: clamp(45 + Number(statbotics?.normEPA || 0) * 10, 0, 100),
+    spiderCycleSpeed: clamp(40 + teleAvg * 2.2, 0, 100),
+    spiderReliability: clamp(50 + winPct * 50, 0, 100),
+    spiderEndgame: clamp(endgameAvg * 3, 0, 100),
+    lastComputed: new Date()
+  };
+}
+
+async function hydrateStatboticsPrefireStats(eventKey, teamNumbers) {
+  const uniqueTeams = [...new Set((teamNumbers || [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0))];
+
+  if (!uniqueTeams.length) {
+    return {
+      scheduledTeams: 0,
+      statboticsFound: 0,
+      rowsCreated: 0,
+      rowsUpdated: 0,
+      teamsWithoutStatbotics: 0
+    };
+  }
+
+  const statboticsByTeam = await fetchStatboticsByTeams(uniqueTeams);
+  const existingRows = await prisma.teamAggregatedStat.findMany({
+    where: {
+      eventKey,
+      teamNumber: { in: uniqueTeams }
+    },
+    select: {
+      teamNumber: true,
+      matchesScouted: true,
+      avgAutoTotalPoints: true,
+      avgTeleopTotalPoints: true,
+      avgEndgamePoints: true
+    }
+  });
+
+  const existingByTeam = new Map(existingRows.map((row) => [Number(row.teamNumber), row]));
+  let rowsCreated = 0;
+  let rowsUpdated = 0;
+
+  for (const teamNumber of uniqueTeams) {
+    const statbotics = statboticsByTeam.get(teamNumber) || null;
+    const seedData = buildSeedStatRow(eventKey, teamNumber, statbotics);
+    const existing = existingByTeam.get(teamNumber);
+
+    if (!existing) {
+      await prisma.teamAggregatedStat.create({ data: seedData });
+      rowsCreated += 1;
+      continue;
+    }
+
+    const hasScoutedData = Number(existing.matchesScouted || 0) > 0;
+    const hasAverages = Number(existing.avgAutoTotalPoints || 0) > 0
+      || Number(existing.avgTeleopTotalPoints || 0) > 0
+      || Number(existing.avgEndgamePoints || 0) > 0;
+
+    if (!hasScoutedData && !hasAverages) {
+      await prisma.teamAggregatedStat.update({
+        where: { eventKey_teamNumber: { eventKey, teamNumber } },
+        data: {
+          avgAutoTotalPoints: seedData.avgAutoTotalPoints,
+          avgTeleopTotalPoints: seedData.avgTeleopTotalPoints,
+          avgEndgamePoints: seedData.avgEndgamePoints,
+          spiderAuto: seedData.spiderAuto,
+          spiderTeleop: seedData.spiderTeleop,
+          spiderDefense: seedData.spiderDefense,
+          spiderCycleSpeed: seedData.spiderCycleSpeed,
+          spiderReliability: seedData.spiderReliability,
+          spiderEndgame: seedData.spiderEndgame,
+          lastComputed: new Date()
+        }
+      });
+      rowsUpdated += 1;
+    }
+  }
+
+  return {
+    scheduledTeams: uniqueTeams.length,
+    statboticsFound: statboticsByTeam.size,
+    rowsCreated,
+    rowsUpdated,
+    teamsWithoutStatbotics: uniqueTeams.length - statboticsByTeam.size
+  };
+}
 
 function normalizeGeneralNotes(input) {
   const text = String(input || '');
@@ -155,6 +266,15 @@ async function detectPasteType(headerLine, bodySample) {
   if (lowered.includes('red1,red2,red3,blue1,blue2,blue3')) return 'schedule';
   if (lowered.includes('color,team') && lowered.includes('match_key')) return 'flat_schedule';
   if (lowered.includes('team_number') && lowered.includes('opr')) return 'oprs';
+  if (
+    lowered.includes('hopper capacity') ||
+    lowered.includes('drivetain type') ||
+    lowered.includes('drivetrain type') ||
+    lowered.includes('swerve module type') ||
+    lowered.includes('vision type') ||
+    lowered.includes('software features') ||
+    lowered.includes('mechanical features')
+  ) return 'pit_scouting_csv';
   if (lowered.includes('team number you are scouting') || lowered.includes('your name')) return 'scouting_csv';
 
   try {
@@ -210,6 +330,179 @@ function extractEndgameTowerPoints(row, endgameResult) {
   if (explicitPoints > 0) return explicitPoints;
 
   return endgameResult === 'level3' ? 30 : endgameResult === 'level2' ? 20 : endgameResult === 'level1' ? 15 : 0;
+}
+
+function parseTextValue(value) {
+  return String(value ?? '').trim();
+}
+
+function parseYesNo(value) {
+  const normalized = String(value ?? '').toLowerCase().trim();
+  if (!normalized) return false;
+  return ['yes', 'y', 'true', '1', 'x'].includes(normalized);
+}
+
+function parseCycleSpeed(value, bps) {
+  const normalized = String(value ?? '').toLowerCase().trim();
+  if (['slow', 'medium', 'fast', 'elite', 'unknown'].includes(normalized)) return normalized;
+  const numeric = Number.parseFloat(String(bps ?? '').trim());
+  if (Number.isFinite(numeric) && numeric > 0) {
+    if (numeric >= 7) return 'elite';
+    if (numeric >= 5) return 'fast';
+    if (numeric >= 2.5) return 'medium';
+    return 'slow';
+  }
+  return 'unknown';
+}
+
+function parseSwerveModuleAndGearing(value) {
+  const text = parseTextValue(value);
+  if (!text) return { moduleType: '', gearing: '' };
+
+  const parts = text.split('/').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      moduleType: parts[0],
+      gearing: parts.slice(1).join(' / ')
+    };
+  }
+
+  return {
+    moduleType: text,
+    gearing: ''
+  };
+}
+
+function extractPitTeamNumber(row) {
+  const primaryAliases = [
+    'Team Number',
+    'team_number',
+    'teamNumber',
+    'Team',
+    'team',
+    'Robot',
+    'robot',
+    'Name',
+    'name'
+  ];
+
+  for (const alias of primaryAliases) {
+    const value = get(row, [alias]);
+    const number = extractInteger(value);
+    if (Number.isFinite(number) && number > 0) {
+      return number;
+    }
+  }
+
+  return 0;
+}
+
+function mapPitRowToRaw(row, eventKey) {
+  const hopperCapacity = parseNumericValue(get(row, ['Hopper Capacity', 'hopper_capacity', 'hopperCapacity']));
+  const drivetrainType = parseTextValue(get(row, ['Drivetain Type', 'Drivetrain Type', 'drivetrain_type', 'drivetrainType'])) || 'unknown';
+  const swerveCombined = get(row, ['Swerve module type / Gearing', 'Swerve Module Type / Gearing', 'swerve_module_type', 'swerveModuleType']);
+  const swerveSplit = parseSwerveModuleAndGearing(swerveCombined);
+  const cycleBps = parseNumericValue(get(row, ['BPS', 'Balls Per Second', 'cycle_balls_per_sec', 'cycleBallsPerSec']));
+  const cycleSpeed = parseCycleSpeed(get(row, ['Cycle Speed', 'cycle_speed', 'cycleSpeed']), cycleBps);
+  const intakeType = parseTextValue(get(row, ['Intake Type', 'intake_type', 'intakeType']));
+  const shooterType = parseTextValue(get(row, ['Shooter Type', 'shooter_type', 'shooterType'])) || 'unknown';
+  const visionType = parseTextValue(get(row, ['Vision Type', 'vision_type', 'visionType']));
+  const autoPaths = parseTextValue(get(row, ['Auto Paths', 'auto_paths', 'autoPaths']));
+  const climbCapability = parseTextValue(get(row, ['Climb capability', 'Climb Capability', 'climb_capability', 'climbCapability']));
+  const softwareFeatures = parseTextValue(get(row, ['Any intresting software features', 'Any interesting software features', 'software_features', 'softwareFeatures']));
+  const mechanicalFeatures = parseTextValue(get(row, ['Any interesting mechanical features', 'mechanical_features', 'mechanicalFeatures']));
+  const mechanismNotes = parseTextValue(get(row, ['Any additional notes', 'Mechanism Notes', 'mechanism_notes', 'mechanismNotes']));
+
+  return {
+    eventKey,
+    scoutName: String(get(row, ['Your name', 'Scout Name', 'scout_name', 'scoutName', 'Name', 'name']) || 'csv-import'),
+    team_number: extractPitTeamNumber(row) || 0,
+    hopper_capacity: hopperCapacity > 0 ? hopperCapacity : null,
+    drivetrain_type: drivetrainType,
+    swerve_module_type: swerveSplit.moduleType || null,
+    swerve_gearing: swerveSplit.gearing || null,
+    can_use_trench: parseYesNo(get(row, ['Trench / Bump Cap', 'Can Use Trench?', 'can_use_trench', 'canUseTrench'])) || String(get(row, ['Trench / Bump Cap'])).toLowerCase().includes('trench'),
+    can_cross_bump: parseYesNo(get(row, ['Trench / Bump Cap', 'Can Cross Bump?', 'can_cross_bump', 'canCrossBump'])) || String(get(row, ['Trench / Bump Cap'])).toLowerCase().includes('bump'),
+    cycle_balls_per_sec: Number.isFinite(cycleBps) ? cycleBps : 0,
+    cycle_speed: cycleSpeed,
+    outpost_capability: parseYesNo(get(row, ['Outpost', 'outpost_capability', 'outpostCapability'])),
+    depot_capability: parseYesNo(get(row, ['Depot', 'depot_capability', 'depotCapability'])),
+    intake_type: intakeType || 'unknown',
+    shooter_type: shooterType,
+    vision_type: visionType || 'unknown',
+    auto_paths: autoPaths || null,
+    climber_type: parseTextValue(get(row, ['Climber Type', 'climber_type', 'climberType'])) || 'unknown',
+    climb_capability: climbCapability || null,
+    has_ground_intake: parseYesNo(get(row, ['Ground intake', 'Ground Intake', 'has_ground_intake', 'hasGroundIntake'])),
+    has_source_intake: parseYesNo(get(row, ['Source intake', 'Source Intake', 'has_source_intake', 'hasSourceIntake'])),
+    drive_motor_type: parseTextValue(get(row, ['Drive Motor Type', 'drive_motor_type', 'driveMotorType'])) || null,
+    shooter_motor_type: parseTextValue(get(row, ['Shooter Motor Type', 'shooter_motor_type', 'shooterMotorType'])) || null,
+    intake_motor_type: parseTextValue(get(row, ['Intake Motor Type', 'intake_motor_type', 'intakeMotorType'])) || null,
+    climber_motor_type: parseTextValue(get(row, ['Climber Motor Type', 'climber_motor_type', 'climberMotorType'])) || null,
+    software_features: softwareFeatures || null,
+    mechanical_features: mechanicalFeatures || null,
+    mechanism_notes: mechanismNotes || null
+  };
+}
+
+async function importPitScoutingCsv(records, eventKey) {
+  await ensureEvent(eventKey);
+  const inserted = [];
+  const errors = [];
+
+  for (const [index, row] of records.entries()) {
+    try {
+      const raw = mapPitRowToRaw(row, eventKey);
+      if (!raw.team_number) {
+        errors.push({ row: index + 2, error: 'Missing team_number' });
+        continue;
+      }
+
+      await ensureTeam(raw.team_number);
+      const normalized = await normalizePitSubmission(raw);
+
+      const report = await prisma.pitScoutingReport.create({
+        data: {
+          eventKey,
+          teamNumber: normalized.team_number,
+          scoutName: normalized.scout_name,
+          hopperCapacity: normalized.hopper_capacity,
+          drivetrainType: normalized.drivetrain_type,
+          swerveModuleType: normalized.swerve_module_type,
+          swerveGearing: normalized.swerve_gearing,
+          canUseTrench: normalized.can_use_trench,
+          canCrossBump: normalized.can_cross_bump,
+          cycleBallsPerSec: Number(normalized.cycle_balls_per_sec || 0),
+          cycleSpeed: normalized.cycle_speed,
+          outpostCapability: normalized.outpost_capability,
+          depotCapability: normalized.depot_capability,
+          intakeType: normalized.intake_type,
+          shooterType: normalized.shooter_type,
+          visionType: normalized.vision_type,
+          autoPaths: normalized.auto_paths,
+          climberType: normalized.climber_type,
+          climbCapability: normalized.climb_capability,
+          hasGroundIntake: normalized.has_ground_intake,
+          hasSourceIntake: normalized.has_source_intake,
+          driveMotorType: normalized.drive_motor_type,
+          shooterMotorType: normalized.shooter_motor_type,
+          intakeMotorType: normalized.intake_motor_type,
+          climberMotorType: normalized.climber_motor_type,
+          softwareFeatures: normalized.software_features,
+          mechanicalFeatures: normalized.mechanical_features,
+          mechanismNotes: normalized.mechanism_notes,
+          aiTags: Array.isArray(normalized.ai_tags) ? normalized.ai_tags.join(',') : null,
+          aiConfidenceScore: normalized.confidence_score
+        }
+      });
+
+      inserted.push({ id: report.id, teamNumber: report.teamNumber });
+    } catch (error) {
+      errors.push({ row: index + 2, error: error.message });
+    }
+  }
+
+  return { imported: inserted.length, inserted, errors, type: 'pit_scouting_csv' };
 }
 
 function mapScoutingRowToRaw(row, eventKey) {
@@ -348,6 +641,7 @@ async function importScoutingCsv(records, eventKey) {
 async function importSchedule(records, eventKey) {
   await ensureEvent(eventKey);
 
+  const scheduleTeams = new Set();
   let importedMatches = 0;
   for (const row of records) {
     const matchKey = String(row.match_key || '').trim();
@@ -361,7 +655,10 @@ async function importSchedule(records, eventKey) {
     const blueTeams = [Number(row.blue1), Number(row.blue2), Number(row.blue3)].map((n) => Number.isFinite(n) ? n : null);
 
     for (const team of [...redTeams, ...blueTeams]) {
-      if (team) await ensureTeam(team);
+      if (team) {
+        scheduleTeams.add(team);
+        await ensureTeam(team);
+      }
     }
 
     const datePart = String(row.scheduled_date || '').trim();
@@ -406,7 +703,9 @@ async function importSchedule(records, eventKey) {
     importedMatches += 1;
   }
 
-  return { importedMatches, type: 'schedule' };
+  const statboticsHydration = await hydrateStatboticsPrefireStats(eventKey, [...scheduleTeams]);
+
+  return { importedMatches, type: 'schedule', statboticsHydration };
 }
 
 async function importFlatSchedule(records, eventKey) {
@@ -666,6 +965,58 @@ async function importOfflineBatchReports(eventKey, reports) {
   return { imported, type: 'offline_batch', eventKey };
 }
 
+async function importOfflinePitBatchReports(eventKey, reports) {
+  if (!eventKey) throw new Error('eventKey is required');
+  if (!Array.isArray(reports)) throw new Error('reports must be an array');
+
+  await ensureEvent(eventKey);
+
+  let imported = 0;
+  for (const report of reports) {
+    const normalized = await normalizePitSubmission({ ...report, eventKey });
+    await ensureTeam(normalized.team_number);
+
+    await prisma.pitScoutingReport.create({
+      data: {
+        eventKey,
+        teamNumber: normalized.team_number,
+        scoutName: normalized.scout_name,
+        hopperCapacity: normalized.hopper_capacity,
+        drivetrainType: normalized.drivetrain_type,
+        swerveModuleType: normalized.swerve_module_type,
+        swerveGearing: normalized.swerve_gearing,
+        canUseTrench: normalized.can_use_trench,
+        canCrossBump: normalized.can_cross_bump,
+        cycleBallsPerSec: Number(normalized.cycle_balls_per_sec || 0),
+        cycleSpeed: normalized.cycle_speed,
+        outpostCapability: normalized.outpost_capability,
+        depotCapability: normalized.depot_capability,
+        intakeType: normalized.intake_type,
+        shooterType: normalized.shooter_type,
+        visionType: normalized.vision_type,
+        autoPaths: normalized.auto_paths,
+        climberType: normalized.climber_type,
+        climbCapability: normalized.climb_capability,
+        hasGroundIntake: normalized.has_ground_intake,
+        hasSourceIntake: normalized.has_source_intake,
+        driveMotorType: normalized.drive_motor_type,
+        shooterMotorType: normalized.shooter_motor_type,
+        intakeMotorType: normalized.intake_motor_type,
+        climberMotorType: normalized.climber_motor_type,
+        softwareFeatures: normalized.software_features,
+        mechanicalFeatures: normalized.mechanical_features,
+        mechanismNotes: normalized.mechanism_notes,
+        aiTags: Array.isArray(normalized.ai_tags) ? normalized.ai_tags.join(',') : null,
+        aiConfidenceScore: normalized.confidence_score
+      }
+    });
+
+    imported += 1;
+  }
+
+  return { imported, type: 'offline_pit_batch', eventKey };
+}
+
 router.post('/csv', async (req, res) => {
   try {
     const { eventKey, csvText } = req.body || {};
@@ -691,6 +1042,10 @@ router.post('/paste', async (req, res) => {
 
       if (Array.isArray(parsed?.reports)) {
         const resolvedEventKey = inferEventKey(parsed, eventKey);
+        if (String(parsed.mode || '').toLowerCase() === 'pit') {
+          const result = await importOfflinePitBatchReports(resolvedEventKey, parsed.reports);
+          return res.json(result);
+        }
         const result = await importOfflineBatchReports(resolvedEventKey, parsed.reports);
         return res.json(result);
       }
@@ -712,6 +1067,11 @@ router.post('/paste', async (req, res) => {
     const records = parseCsvText(text);
 
     if (!records.length) return res.status(400).json({ error: 'No rows parsed from text' });
+
+      if (resolvedType === 'pit_scouting_csv') {
+        const result = await importPitScoutingCsv(records, eventKey);
+        return res.json({ ...result, eventKey });
+      }
 
     if (resolvedType === 'schedule') {
       const resolvedEventKey = inferEventKeyFromCsvRecords(records, eventKey);
@@ -743,8 +1103,14 @@ router.post('/paste', async (req, res) => {
 
 router.post('/offline-batch', async (req, res) => {
   try {
-    const { eventKey, reports } = req.body || {};
+    const { eventKey, reports, mode } = req.body || {};
     if (!eventKey) return res.status(400).json({ error: 'eventKey is required' });
+
+    if (String(mode || '').toLowerCase() === 'pit') {
+      const result = await importOfflinePitBatchReports(eventKey, reports);
+      return res.json(result);
+    }
+
     const result = await importOfflineBatchReports(eventKey, reports);
     return res.json(result);
   } catch (error) {

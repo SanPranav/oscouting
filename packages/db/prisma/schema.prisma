@@ -26,6 +26,7 @@ model Event {
   matches      Match[]
   rankings     Ranking[]
   matchReports MatchScoutingReport[]
+  pitReports   PitScoutingReport[]
   teamStats    TeamAggregatedStat[]
   external     ExternalScoutImport[]
 
@@ -45,6 +46,7 @@ model Team {
   rankings     Ranking[]
   teamStats    TeamAggregatedStat[]
   matchReports MatchScoutingReport[]
+  pitReports   PitScoutingReport[]
   external     ExternalScoutImport[]
 
   @@map("teams")
@@ -133,6 +135,49 @@ model MatchScoutingReport {
   @@index([eventKey])
   @@index([teamNumber])
   @@map("match_scouting_reports")
+}
+
+model PitScoutingReport {
+  id                Int      @id @default(autoincrement())
+  eventKey          String   @map("event_key")
+  teamNumber        Int      @map("team_number")
+  scoutName         String   @map("scout_name")
+  hopperCapacity    Int?     @map("hopper_capacity")
+  drivetrainType    String?  @map("drivetrain_type")
+  swerveModuleType  String?  @map("swerve_module_type")
+  swerveGearing     String?  @map("swerve_gearing")
+  canUseTrench      Boolean  @default(false) @map("can_use_trench")
+  canCrossBump      Boolean  @default(false) @map("can_cross_bump")
+  cycleBallsPerSec  Float?   @map("cycle_balls_per_sec")
+  cycleSpeed        String?  @map("cycle_speed")
+  outpostCapability Boolean  @default(false) @map("outpost_capability")
+  depotCapability   Boolean  @default(false) @map("depot_capability")
+  intakeType        String?  @map("intake_type")
+  shooterType       String?  @map("shooter_type")
+  visionType        String?  @map("vision_type")
+  autoPaths         String?  @map("auto_paths")
+  climberType       String?  @map("climber_type")
+  climbCapability   String?  @map("climb_capability")
+  hasGroundIntake   Boolean  @default(false) @map("has_ground_intake")
+  hasSourceIntake   Boolean  @default(false) @map("has_source_intake")
+  driveMotorType    String?  @map("drive_motor_type")
+  shooterMotorType  String?  @map("shooter_motor_type")
+  intakeMotorType   String?  @map("intake_motor_type")
+  climberMotorType  String?  @map("climber_motor_type")
+  softwareFeatures  String?  @map("software_features")
+  mechanicalFeatures String? @map("mechanical_features")
+  mechanismNotes    String?  @map("mechanism_notes")
+  aiTags            String?  @map("ai_tags")
+  aiConfidenceScore Float?   @map("ai_confidence_score")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  event Event @relation(fields: [eventKey], references: [eventKey], onDelete: Cascade)
+  team  Team  @relation(fields: [teamNumber], references: [teamNumber], onDelete: Cascade)
+
+  @@index([eventKey])
+  @@index([teamNumber])
+  @@map("pit_scouting_reports")
 }
 
 model TeamAggregatedStat {

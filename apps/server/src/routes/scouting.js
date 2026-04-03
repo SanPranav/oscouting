@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '@3749/db/src/client.js';
 import { normalizeMatchSubmission } from '@3749/ai/src/normalize.js';
+import { normalizePitSubmission } from '@3749/ai/src/normalize.js';
 import { recomputeTeamStats } from '../stats.js';
 
 const router = Router();
@@ -27,6 +28,23 @@ function normalizeGeneralNotes(input) {
     .join(' | ');
 
   return normalized || null;
+}
+
+async function ensureEvent(eventKey) {
+  await prisma.event.upsert({
+    where: { eventKey },
+    update: {},
+    create: { eventKey, name: eventKey, year: 2026 }
+  });
+}
+
+async function ensureTeam(teamNumber) {
+  if (!teamNumber) return;
+  await prisma.team.upsert({
+    where: { teamNumber },
+    update: {},
+    create: { teamNumber, nickname: `Team ${teamNumber}` }
+  });
 }
 
 router.post('/match', async (req, res) => {
@@ -84,6 +102,79 @@ router.post('/match', async (req, res) => {
 router.get('/match/:eventKey/:teamNumber', async (req, res) => {
   const { eventKey, teamNumber } = req.params;
   const data = await prisma.matchScoutingReport.findMany({
+    where: { eventKey, teamNumber: Number(teamNumber) },
+    orderBy: { createdAt: 'desc' }
+  });
+  res.json(data);
+});
+
+router.post('/pit', async (req, res) => {
+  try {
+    const raw = req.body || {};
+    const normalized = await normalizePitSubmission(raw);
+
+    if (!raw.eventKey && !normalized.event_key) {
+      return res.status(400).json({ error: 'eventKey is required' });
+    }
+    if (!normalized.team_number) {
+      return res.status(400).json({ error: 'team_number is required' });
+    }
+
+    const eventKey = raw.eventKey || normalized.event_key;
+    await ensureEvent(eventKey);
+    await ensureTeam(normalized.team_number);
+
+    const report = await prisma.pitScoutingReport.create({
+      data: {
+        eventKey,
+        teamNumber: normalized.team_number,
+        scoutName: normalized.scout_name,
+        hopperCapacity: normalized.hopper_capacity,
+        drivetrainType: normalized.drivetrain_type,
+        swerveModuleType: normalized.swerve_module_type,
+        swerveGearing: normalized.swerve_gearing,
+        canUseTrench: normalized.can_use_trench,
+        canCrossBump: normalized.can_cross_bump,
+        cycleBallsPerSec: Number(normalized.cycle_balls_per_sec || 0),
+        cycleSpeed: normalized.cycle_speed,
+        outpostCapability: normalized.outpost_capability,
+        depotCapability: normalized.depot_capability,
+        intakeType: normalized.intake_type,
+        shooterType: normalized.shooter_type,
+        visionType: normalized.vision_type,
+        autoPaths: normalized.auto_paths,
+        climberType: normalized.climber_type,
+        climbCapability: normalized.climb_capability,
+        hasGroundIntake: normalized.has_ground_intake,
+        hasSourceIntake: normalized.has_source_intake,
+        driveMotorType: normalized.drive_motor_type,
+        shooterMotorType: normalized.shooter_motor_type,
+        intakeMotorType: normalized.intake_motor_type,
+        climberMotorType: normalized.climber_motor_type,
+        softwareFeatures: normalized.software_features,
+        mechanicalFeatures: normalized.mechanical_features,
+        mechanismNotes: normalized.mechanism_notes,
+        aiTags: Array.isArray(normalized.ai_tags) ? normalized.ai_tags.join(',') : null,
+        aiConfidenceScore: normalized.confidence_score
+      }
+    });
+
+    return res.status(201).json({
+      report,
+      ai: {
+        confidence_score: normalized.confidence_score,
+        warnings: normalized.warnings,
+        tags: normalized.ai_tags
+      }
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/pit/:eventKey/:teamNumber', async (req, res) => {
+  const { eventKey, teamNumber } = req.params;
+  const data = await prisma.pitScoutingReport.findMany({
     where: { eventKey, teamNumber: Number(teamNumber) },
     orderBy: { createdAt: 'desc' }
   });

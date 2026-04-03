@@ -5,6 +5,7 @@ Monorepo for Team 3749 event scouting, data aggregation, and match strategy gene
 ## Quick System Overview
 
 - `tablet` collects scout data.
+- `pit-tablet` collects pit scouting data.
 - `aggregator` imports/syncs event data.
 - `server` processes stats + prediction logic.
 - `dashboard` shows match predictions and tactical plans.
@@ -19,7 +20,7 @@ Monorepo for Team 3749 event scouting, data aggregation, and match strategy gene
 
 ## Current Stack
 
-- Frontend: React + Vite (`apps/tablet`, `apps/aggregator`, `apps/dashboard`, `apps/pitch`)
+- Frontend: React + Vite (`apps/tablet`, `apps/pit-tablet`, `apps/aggregator`, `apps/dashboard`, `apps/pitch`)
 - Backend: Express (`apps/server`)
 - Database: Prisma + SQLite (`packages/db/prisma/dev.db`)
 - Prediction Engine: `packages/prediction`
@@ -224,7 +225,10 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
 
 - API: `http://localhost:2540`
 - Health: `http://localhost:2540/health`
-- Tablet: `http://localhost:2541`
+- Scouting Home (chooser): `http://localhost:2541/`
+- Match Tablet (same-domain route): `http://localhost:2541/match-tablet`
+- Pit Tablet (same-domain route): `http://localhost:2541/pit-tablet`
+- Pit Tablet (standalone app): `http://localhost:2546`
 - Aggregator: `http://localhost:2542`
 - Dashboard: `http://localhost:2543`
 - Pick Pitch Page: `http://localhost:2544`
@@ -247,6 +251,15 @@ Those steps are unrelated to the Lemonade Server flow used by this repo.
 
 - `POST /api/import/paste`
 - `POST /api/import/offline-batch`
+
+### Deployed access
+
+- The tablet app root (`/`) is now a scouting home page with links to both tablet modes.
+- Match scouting route: `/match-tablet`
+- Pit scouting route: `/pit-tablet`
+- The dashboard and aggregator now include an `Open Pit Tablet` link.
+- Set `VITE_PIT_TABLET_URL` in the deployed dashboard/aggregator environment to your public pit tablet URL.
+- If you deploy the apps on the same host, keep the pit tablet at a stable public URL so scouts can jump to it directly.
 
 ### Sync
 
