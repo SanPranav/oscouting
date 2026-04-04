@@ -7,6 +7,16 @@ Return JSON only.`;
 const UNKNOWN = 'unknown';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const parseLeadingZeroNumber = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return 0;
+  if (/^0\d+$/.test(text)) {
+    return Number.parseInt(text.replace(/^0+(?=\d)/, ''), 10) || 0;
+  }
+
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
 const normalizeOptionalText = (value) => {
   const text = String(value || '').trim();
   return text || null;
@@ -179,7 +189,7 @@ function normalizePitLocally(raw) {
 
   return {
     event_key: String(raw.eventKey || raw.event_key || ''),
-    team_number: clamp(Number(raw.team_number || raw.teamNumber || 0), 0, 99999),
+    team_number: clamp(parseLeadingZeroNumber(raw.team_number || raw.teamNumber || 0), 0, 99999),
     scout_name: String(raw.scoutName || raw.scout_name || 'unknown').trim() || 'unknown',
     hopper_capacity: hopperCapacity > 0 ? hopperCapacity : null,
     drivetrain_type: drivetrainType,
@@ -217,8 +227,8 @@ function normalizeLocally(raw) {
   const endgame = VALID_ENDGAME.has(raw.endgame_result) ? raw.endgame_result : 'none';
 
   return {
-    team_number: clamp(Number(raw.team_number || 0), 0, 99999),
-    match_number: clamp(Number(raw.match_number || 0), 0, 999),
+    team_number: clamp(parseLeadingZeroNumber(raw.team_number || 0), 0, 99999),
+    match_number: clamp(parseLeadingZeroNumber(raw.match_number || 0), 0, 999),
     alliance_color: alliance,
     auto_fuel_auto: clamp(Number(raw.auto_fuel_auto || 0), 0, 99),
     auto_fuel_missed: clamp(Number(raw.auto_fuel_missed || 0), 0, 99),

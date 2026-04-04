@@ -1,25 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 0%;
+  --background: 221 89% 14%;
   --foreground: 210 40% 98%;
-  --card: 0 0% 4%;
+  --card: 221 84% 17%;
   --card-foreground: 210 40% 98%;
-  --primary: 0 0% 10%;
-  --primary-foreground: 210 40% 98%;
-  --accent: 0 0% 7%;
+  --primary: 199 100% 56%;
+  --primary-foreground: 224 88% 14%;
+  --accent: 221 71% 23%;
   --accent-foreground: 210 40% 98%;
-  --muted: 0 0% 8%;
-  --muted-foreground: 215 20% 65%;
-  --border: 0 0% 16%;
-  --input: 0 0% 16%;
+  --muted: 223 53% 24%;
+  --muted-foreground: 212 40% 82%;
+  --border: 214 70% 35%;
+  --input: 214 66% 30%;
   --radius: 0.75rem;
 }
 
 @layer base {
   * { @apply border-border; }
   html { scroll-behavior: smooth; }
-  body { @apply bg-background text-foreground; }
+  body {
+    @apply text-foreground;
+    font-family: 'Barlow', sans-serif;
+    background:
+      radial-gradient(1200px 650px at 85% -10%, rgba(29, 165, 255, 0.22), transparent 50%),
+      radial-gradient(900px 500px at 0% 30%, rgba(36, 133, 255, 0.28), transparent 50%),
+      linear-gradient(165deg, #061646 0%, #0a2670 44%, #08357f 100%);
+    min-height: 100vh;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: 'Space Grotesk', 'Barlow', sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+.pitch-shell {
+  position: relative;
+}
+
+.pitch-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(87, 172, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(87, 172, 255, 0.12) 1px, transparent 1px);
+  background-size: 38px 38px;
+  opacity: 0.3;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent 85%);
+}
+
+.pitch-hero {
+  background:
+    linear-gradient(140deg, rgba(4, 28, 92, 0.88), rgba(7, 43, 120, 0.78)),
+    radial-gradient(circle at 15% 10%, rgba(94, 197, 255, 0.26), transparent 45%);
+  box-shadow: 0 22px 50px rgba(3, 11, 42, 0.5);
+}
+
+.poster-story-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.focus-step {
+  min-height: 54vh;
+  border-color: rgba(109, 208, 255, 0.2);
+  background: linear-gradient(165deg, rgba(7, 28, 78, 0.54), rgba(5, 18, 54, 0.44));
+  box-shadow: inset 0 0 0 1px rgba(109, 208, 255, 0.05);
+  opacity: 0.72;
+  transform: translateY(12px) scale(0.99);
+  transition: opacity 420ms ease, transform 520ms ease, border-color 320ms ease, box-shadow 420ms ease;
+}
+
+.focus-step.is-active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  border-color: rgba(151, 231, 255, 0.46);
+  box-shadow: inset 0 0 0 1px rgba(151, 231, 255, 0.18), 0 20px 40px -28px rgba(44, 165, 255, 0.75);
+}
+
+.poster-pin {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+}
+
+.poster-camera {
+  height: 62vh;
+  min-height: 340px;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(109, 208, 255, 0.2);
+  background-repeat: no-repeat;
+  background-color: rgba(2, 12, 38, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(109, 208, 255, 0.14), 0 26px 52px -34px rgba(25, 130, 238, 0.75);
+  transition:
+    background-position 1500ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    background-size 1500ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 400ms ease;
+}
+
+.poster-camera:hover {
+  box-shadow: inset 0 0 0 1px rgba(125, 224, 255, 0.3), 0 34px 70px -34px rgba(25, 130, 238, 0.9);
+}
+
+.video-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  display: block;
+}
+
+.cad-frame {
+  width: 100%;
+  min-height: 420px;
+  border: 0;
+  display: block;
+  background: rgba(2, 12, 38, 0.8);
+}
+
+@media (min-width: 1024px) {
+  .poster-story-grid {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    align-items: start;
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .focus-step {
+    min-height: 38vh;
+    opacity: 1;
+    transform: none;
+  }
+
+  .poster-pin {
+    position: static;
+  }
+
+  .poster-camera {
+    height: 44vh;
+    min-height: 270px;
+  }
+
+  .cad-frame {
+    min-height: 300px;
+  }
 }

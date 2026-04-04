@@ -21,6 +21,48 @@ const normalizeMatchSuffix = (rawValue, fallback) => {
   return fallback;
 };
 
+const parseLeadingZeroNumberish = (value, fallback = 0) => {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const normalized = /^0\d+$/.test(text)
+    ? text.replace(/^0+(?=\d)/, '')
+    : text;
+  const numeric = Number.parseInt(normalized, 10);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
+
+const normalizeMatchRow = (row) => ({
+  ...row,
+  teamNumber: parseLeadingZeroNumberish(row?.teamNumber, 0),
+  matchesScouted: Number(row?.matchesScouted || 0),
+  statbotics: row?.statbotics
+    ? {
+        ...row.statbotics,
+        rank: parseLeadingZeroNumberish(row.statbotics.rank, Number(row.statbotics.rank || 0))
+      }
+    : null
+});
+
+const normalizePitRow = (row) => ({
+  ...row,
+  teamNumber: parseLeadingZeroNumberish(row?.teamNumber, 0)
+});
+
+const normalizeMissingScoutingRow = (row) => ({
+  ...row,
+  matchNumber: parseLeadingZeroNumberish(row?.matchNumber, 0),
+  setNumber: parseLeadingZeroNumberish(row?.setNumber, 1),
+  redTeams: Array.isArray(row?.redTeams)
+    ? row.redTeams.map((team) => parseLeadingZeroNumberish(team, 0)).filter((team) => team > 0)
+    : [],
+  blueTeams: Array.isArray(row?.blueTeams)
+    ? row.blueTeams.map((team) => parseLeadingZeroNumberish(team, 0)).filter((team) => team > 0)
+    : [],
+  missingTeams: Array.isArray(row?.missingTeams)
+    ? row.missingTeams.map((team) => parseLeadingZeroNumberish(team, 0)).filter((team) => team > 0)
+    : []
+});
+
 export default function App() {
   const [mode, setMode] = useState(MODE_MATCH);
   const [eventKey, setEventKey] = useState(DEFAULT_EVENT_KEY);
@@ -288,8 +330,11 @@ export default function App() {
         : Array.isArray(data?.rows)
           ? data.rows
           : [];
+      const normalizedRows = targetMode === MODE_MATCH
+        ? pitRows.map((row) => normalizeMatchRow(row))
+        : pitRows.map((row) => normalizePitRow(row));
 
-      setRows(pitRows);
+      setRows(normalizedRows);
       if (mode === MODE_PIT && !silent && data && !Array.isArray(data)) {
         setMessage(`TBA roster filtered (${data.teamCount || 0} teams): loaded ${data.pitReportCount ?? pitRows.length} reports`);
       }
@@ -750,7 +795,7 @@ export default function App() {
         return;
       }
 
-      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const rows = Array.isArray(data.rows) ? data.rows.map((row) => normalizeMissingScoutingRow(row)) : [];
       setMissingData({
         rows,
         missingMatchCount: Number(data.missingMatchCount || rows.length),

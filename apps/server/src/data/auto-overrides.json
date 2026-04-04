@@ -6,5 +6,65 @@
   "2026caasv:294": {
     "autoDid": false,
     "autoDescription": "—"
+  },
+  "2026caasv:846": {
+    "autoDid": true,
+    "autoDescription": "Bump mid grab shoot for 1 and a half cycle"
+  },
+  "2026caasv:2839": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:3341": {
+    "autoDid": true,
+    "autoDescription": "Climb"
+  },
+  "2026caasv:3749": {
+    "autoDid": true,
+    "autoDescription": "move back and shoot"
+  },
+  "2026caasv:4160": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:4419": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:4984": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:5025": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:5474": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:5514": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:6515": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:7607": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:8119": {
+    "autoDid": true,
+    "autoDescription": "forgot"
+  },
+  "2026caasv:8870": {
+    "autoDid": false,
+    "autoDescription": "—"
+  },
+  "2026caasv:2404": {
+    "autoDid": false,
+    "autoDescription": "Didn’t move"
   }
 }

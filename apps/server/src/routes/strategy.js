@@ -40,6 +40,16 @@ const normalizeMovementProfile = (value) => {
   return ['none', 'trench', 'bump', 'both'].includes(normalized) ? normalized : 'none';
 };
 
+const parseLeadingZeroNumberish = (value, fallback = 0) => {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const normalized = /^0\d+$/.test(text)
+    ? text.replace(/^0+(?=\d)/, '')
+    : text;
+  const numeric = Number.parseInt(normalized, 10);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
+
 const movementKey = (eventKey, teamNumber) => `${String(eventKey || '').trim()}:${Number(teamNumber || 0)}`;
 
 const loadMovementOverrides = async () => {
@@ -1804,8 +1814,8 @@ router.get('/missing-scouting/:eventKey', async (req, res) => {
     const reportedByMatch = new Map();
     for (const row of reports) {
       const compLevel = String(row.compLevel || '').toLowerCase();
-      const matchNumber = Number(row.matchNumber || 0);
-      const teamNumber = Number(row.teamNumber || 0);
+      const matchNumber = parseLeadingZeroNumberish(row.matchNumber, 0);
+      const teamNumber = parseLeadingZeroNumberish(row.teamNumber, 0);
       if (!compLevel || !matchNumber || !teamNumber) continue;
 
       const key = `${compLevel}:${matchNumber}`;
@@ -1816,16 +1826,16 @@ router.get('/missing-scouting/:eventKey', async (req, res) => {
     const missingMatches = [];
     for (const match of matches) {
       const compLevel = String(match.compLevel || '').toLowerCase();
-      const matchNumber = Number(match.matchNumber || 0);
+      const matchNumber = parseLeadingZeroNumberish(match.matchNumber, 0);
       if (!compLevel || !matchNumber) continue;
 
       const scheduledTeams = [
-        Number(match.redTeam1 || 0),
-        Number(match.redTeam2 || 0),
-        Number(match.redTeam3 || 0),
-        Number(match.blueTeam1 || 0),
-        Number(match.blueTeam2 || 0),
-        Number(match.blueTeam3 || 0)
+        parseLeadingZeroNumberish(match.redTeam1, 0),
+        parseLeadingZeroNumberish(match.redTeam2, 0),
+        parseLeadingZeroNumberish(match.redTeam3, 0),
+        parseLeadingZeroNumberish(match.blueTeam1, 0),
+        parseLeadingZeroNumberish(match.blueTeam2, 0),
+        parseLeadingZeroNumberish(match.blueTeam3, 0)
       ].filter((team) => team > 0);
 
       if (!scheduledTeams.length) continue;
@@ -1844,8 +1854,8 @@ router.get('/missing-scouting/:eventKey', async (req, res) => {
         setNumber: Number(match.setNumber || 1),
         scheduledDate: when ? when.toISOString().slice(0, 10) : null,
         scheduledTime: when ? when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null,
-        redTeams: [match.redTeam1, match.redTeam2, match.redTeam3].map((team) => Number(team || 0)).filter((team) => team > 0),
-        blueTeams: [match.blueTeam1, match.blueTeam2, match.blueTeam3].map((team) => Number(team || 0)).filter((team) => team > 0),
+        redTeams: [match.redTeam1, match.redTeam2, match.redTeam3].map((team) => parseLeadingZeroNumberish(team, 0)).filter((team) => team > 0),
+        blueTeams: [match.blueTeam1, match.blueTeam2, match.blueTeam3].map((team) => parseLeadingZeroNumberish(team, 0)).filter((team) => team > 0),
         missingTeams,
         missingCount: missingTeams.length
       });

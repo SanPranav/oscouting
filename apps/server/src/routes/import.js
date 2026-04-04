@@ -56,14 +56,20 @@ const get = (row, aliases) => {
 };
 
 const extractInteger = (value) => {
-  const direct = Number.parseInt(String(value ?? '').trim(), 10);
+  const text = String(value ?? '').trim();
+  if (/^0\d+$/.test(text)) {
+    const normalized = Number.parseInt(text.replace(/^0+(?=\d)/, ''), 10);
+    if (Number.isFinite(normalized)) return normalized;
+  }
+
+  const direct = Number.parseInt(text, 10);
   if (Number.isFinite(direct)) return direct;
 
-  const text = String(value ?? '').toLowerCase();
-  const qm = text.match(/(?:^|[^a-z])qm\s*(\d+)/);
+  const lowered = text.toLowerCase();
+  const qm = lowered.match(/(?:^|[^a-z])qm\s*(\d+)/);
   if (qm) return Number.parseInt(qm[1], 10);
 
-  const trailing = text.match(/(\d+)/);
+  const trailing = lowered.match(/(\d+)/);
   if (trailing) return Number.parseInt(trailing[1], 10);
 
   return 0;
