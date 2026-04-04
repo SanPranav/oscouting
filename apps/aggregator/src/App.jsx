@@ -37,6 +37,9 @@ export default function App() {
   const [editingTeams, setEditingTeams] = useState({});
   const [manualEdits, setManualEdits] = useState({});
   const [savingTeams, setSavingTeams] = useState({});
+  const [missingModalOpen, setMissingModalOpen] = useState(false);
+  const [missingLoading, setMissingLoading] = useState(false);
+  const [missingData, setMissingData] = useState({ rows: [], missingMatchCount: 0, missingTeamCount: 0, matchCount: 0 });
   const sharedSelectionSnapshotRef = useRef('');
   const consecutiveSyncFailuresRef = useRef(0);
   const lastSyncFailureMessageRef = useRef('');
@@ -368,11 +371,11 @@ export default function App() {
       avgAutoTotalPoints: Math.max(0, parse(draft.avgAutoTotalPoints, Number(row.avgAutoTotalPoints || 0))),
       avgTeleopTotalPoints: Math.max(0, parse(draft.avgTeleopTotalPoints, Number(row.avgTeleopTotalPoints || 0))),
       avgEndgamePoints: Math.max(0, parse(draft.avgEndgamePoints, Number(row.avgEndgamePoints || 0))),
-      spiderAuto: Math.max(0, Math.min(100, parse(draft.spiderAuto, Number(row.spiderAuto || 0)))),
-      spiderTeleop: Math.max(0, Math.min(100, parse(draft.spiderTeleop, Number(row.spiderTeleop || 0)))),
+      spiderAuto: Math.max(0, parse(draft.spiderAuto, Number(row.spiderAuto || 0))),
+      spiderTeleop: Math.max(0, parse(draft.spiderTeleop, Number(row.spiderTeleop || 0))),
       spiderDefense: Math.max(0, Math.min(100, parse(draft.spiderDefense, Number(row.spiderDefense || 0)))),
       spiderCycleSpeed: Math.max(0, Math.min(100, parse(draft.spiderCycleSpeed, Number(row.spiderCycleSpeed || 0)))),
-      spiderEndgame: Math.max(0, Math.min(100, parse(draft.spiderEndgame, Number(row.spiderEndgame || 0)))),
+      spiderEndgame: Math.max(0, parse(draft.spiderEndgame, Number(row.spiderEndgame || 0))),
       spiderReliability: Math.max(0, Math.min(100, parse(draft.spiderReliability, Number(row.spiderReliability || 0)))),
       disableRate: Math.max(0, Math.min(1, parse(draft.disableRatePct, Number(row.disableRate || 0) * 100) / 100)),
       foulRate: Math.max(0, parse(draft.foulRate, Number(row.foulRate || 0))),
@@ -735,6 +738,33 @@ export default function App() {
     }
   };
 
+  const openMissingScoutingModal = async () => {
+    setMissingModalOpen(true);
+    setMissingLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/strategy/missing-scouting/${encodeURIComponent(eventKey)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        setMessage(data.error || 'Failed loading missing scouting list');
+        setMissingData({ rows: [], missingMatchCount: 0, missingTeamCount: 0, matchCount: 0 });
+        return;
+      }
+
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      setMissingData({
+        rows,
+        missingMatchCount: Number(data.missingMatchCount || rows.length),
+        missingTeamCount: Number(data.missingTeamCount || 0),
+        matchCount: Number(data.matchCount || 0)
+      });
+    } catch {
+      setMessage('E_SERVER_UNREACHABLE: failed loading missing scouting list');
+      setMissingData({ rows: [], missingMatchCount: 0, missingTeamCount: 0, matchCount: 0 });
+    } finally {
+      setMissingLoading(false);
+    }
+  };
+
   useEffect(() => {
     syncSelectedEvent({ forceReload: true });
   }, [mode]);
@@ -787,6 +817,7 @@ export default function App() {
               <>
                 <Button variant="secondary" onClick={scrape}>Refetch</Button>
                 <Button variant="outline" onClick={scrapeAll}>Refetch All</Button>
+                <Button variant="outline" onClick={openMissingScoutingModal}>Missing Scouts</Button>
               </>
             ) : (
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-input px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground">
@@ -857,6 +888,44 @@ export default function App() {
                   className="h-full bg-primary transition-all duration-200"
                   style={{ width: `${loadingProgress}%` }}
                 />
+              </div>
+            </div>
+          ) : null}
+
+          {missingModalOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="max-h-[85vh] w-full max-w-5xl overflow-hidden rounded-lg border border-input bg-background shadow-lg">
+                <div className="flex items-center justify-between border-b border-input p-4">
+                  <div>
+                    <h3 className="text-base font-semibold">Missing Scouting Records</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Event {eventKey} | Missing matches: {missingData.missingMatchCount} | Missing team records: {missingData.missingTeamCount} | Scheduled matches: {missingData.matchCount}
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => setMissingModalOpen(false)}>Close</Button>
+                </div>
+                <div className="max-h-[70vh] overflow-auto p-4">
+                  {missingLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading missing scouting records...</p>
+                  ) : !missingData.rows.length ? (
+                    <p className="text-sm text-muted-foreground">No missing scouting records found.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {missingData.rows.map((row) => (
+                        <div key={String(row.matchKey || `${row.compLevel}-${row.matchNumber}`)} className="rounded border border-input p-3">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                            <span className="font-semibold">{row.matchKey || `${row.compLevel}${row.matchNumber}`}</span>
+                            <span className="text-muted-foreground">{row.scheduledDate || 'Date N/A'} {row.scheduledTime || 'Time N/A'}</span>
+                            <span className="text-muted-foreground">Missing: {Array.isArray(row.missingTeams) ? row.missingTeams.join(', ') : '—'}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Red: {Array.isArray(row.redTeams) ? row.redTeams.join(', ') : '—'} | Blue: {Array.isArray(row.blueTeams) ? row.blueTeams.join(', ') : '—'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}

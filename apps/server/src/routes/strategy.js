@@ -223,18 +223,55 @@ const fetchTbaCompetitions = async (year) => {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-const parseAutoPathFromNotes = (notes) => {
+const normalizeNoteKey = (key) => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const parseFieldFromNotes = (notes, fieldKeys) => {
   const raw = String(notes || '').trim();
-  if (!raw) return '';
+  const targets = (Array.isArray(fieldKeys) ? fieldKeys : [fieldKeys])
+    .map((key) => normalizeNoteKey(key))
+    .filter(Boolean);
+  if (!raw || !targets.length) return '';
 
   const parts = raw.split('|');
   for (const part of parts) {
-    const [key, ...rest] = String(part || '').split('=');
-    if (String(key || '').trim().toLowerCase() !== 'auto_path') continue;
-    return rest.join('=').trim();
+    const token = String(part || '').trim();
+    if (!token) continue;
+
+    const separatorIndex = token.includes('=') ? token.indexOf('=') : token.indexOf(':');
+    if (separatorIndex < 0) continue;
+
+    const key = token.slice(0, separatorIndex).trim();
+    const rest = token.slice(separatorIndex + 1).trim();
+    if (!targets.includes(normalizeNoteKey(key))) continue;
+
+    const value = rest.trim();
+    if (!value || /^n\/?a$/i.test(value)) return '';
+    return value;
   }
 
   return '';
+};
+
+const parseAutoPathFromNotes = (notes) => parseFieldFromNotes(notes, [
+  'auto_path',
+  'auto path',
+  'autopath',
+  'describe the auto path',
+  'describe auto path'
+]);
+
+const parseDisplayNotesFromGeneralNotes = (notes) => {
+  const additional = parseFieldFromNotes(notes, 'additional_notes');
+  if (additional) return additional;
+
+  const cycle = parseFieldFromNotes(notes, 'cycle_notes');
+  if (cycle) return cycle;
+
+  const driving = parseFieldFromNotes(notes, 'driving_behavior_notes');
+  if (driving) return driving;
+
+  const raw = String(notes || '').trim();
+  return raw && !/^n\/?a$/i.test(raw) ? raw : '';
 };
 
 const parseEventYear = (eventKey) => {
@@ -1108,6 +1145,7 @@ router.get('/stats/:eventKey', async (req, res) => {
 
   const movementByTeam = new Map();
   const autoByTeam = new Map();
+  const notesByTeam = new Map();
   for (const row of movementRows) {
     const teamNumber = Number(row.teamNumber);
     if (!teamNumber) continue;
@@ -1133,6 +1171,13 @@ router.get('/stats/:eventKey', async (req, res) => {
       });
     }
 
+    if (!notesByTeam.has(teamNumber)) {
+      notesByTeam.set(teamNumber, {
+        latestCreatedAt: 0,
+        latestNote: ''
+      });
+    }
+
     const autoAgg = autoByTeam.get(teamNumber);
     const hadAutoAction = Boolean(
       Number(row.autoFuelAuto || 0) > 0
@@ -1143,10 +1188,17 @@ router.get('/stats/:eventKey', async (req, res) => {
     if (hadAutoAction) autoAgg.autoRuns += 1;
 
     const noteAutoPath = parseAutoPathFromNotes(row.generalNotes || '');
+    const noteDisplay = parseDisplayNotesFromGeneralNotes(row.generalNotes || '');
     const createdAtValue = new Date(row.createdAt || 0).valueOf();
     if (noteAutoPath && createdAtValue >= autoAgg.latestCreatedAt) {
       autoAgg.latestCreatedAt = createdAtValue;
       autoAgg.latestDescription = noteAutoPath;
+    }
+
+    const noteAgg = notesByTeam.get(teamNumber);
+    if (noteDisplay && createdAtValue >= noteAgg.latestCreatedAt) {
+      noteAgg.latestCreatedAt = createdAtValue;
+      noteAgg.latestNote = noteDisplay;
     }
   }
 
@@ -1157,6 +1209,7 @@ router.get('/stats/:eventKey', async (req, res) => {
     const sb = statboticsByTeam.get(row.teamNumber);
     const movement = movementByTeam.get(row.teamNumber);
     const auto = autoByTeam.get(row.teamNumber);
+    const teamNotes = notesByTeam.get(row.teamNumber);
     const bumpUsed = Boolean(movement && movement.bumpCrosses > 0);
     const trenchUsed = Boolean(movement && movement.trenchCrosses > 0);
     const autoDid = Boolean((auto && auto.autoRuns > 0) || Number(row.avgAutoTotalPoints || 0) > 0);
@@ -1169,6 +1222,7 @@ router.get('/stats/:eventKey', async (req, res) => {
       : autoDid;
     const overrideAutoDescription = autoOverride ? normalizeAutoDescription(autoOverride.autoDescription || '') : '';
     const finalAutoDescription = overrideAutoDescription || autoDescription;
+    const finalNotes = String(row.notes || '').trim() || String(teamNotes?.latestNote || '').trim() || '—';
     const movementProfile = trenchUsed && bumpUsed
       ? 'both'
       : trenchUsed
@@ -1189,6 +1243,7 @@ router.get('/stats/:eventKey', async (req, res) => {
       bumpUsed: finalBumpUsed,
       autoDid: finalAutoDid,
       autoDescription: finalAutoDescription,
+      notes: finalNotes,
       movementSampleSize: movement ? movement.total : 0,
       trenchCrossCount: movement ? movement.trenchCrosses : 0,
       bumpCrossCount: movement ? movement.bumpCrosses : 0,
@@ -1490,12 +1545,12 @@ router.post('/stats/:eventKey/:teamNumber/manual', async (req, res) => {
       climbSuccessRate: clamp(parseNumber(payload.climbSuccessRate, Number(base.climbSuccessRate || 0)), 0, 1),
       disableRate: clamp(parseNumber(payload.disableRate, Number(base.disableRate || 0)), 0, 1),
       foulRate: Math.max(0, parseNumber(payload.foulRate, Number(base.foulRate || 0))),
-      spiderAuto: clamp(parseNumber(payload.spiderAuto, Number(base.spiderAuto || 0)), 0, 100),
-      spiderTeleop: clamp(parseNumber(payload.spiderTeleop, Number(base.spiderTeleop || 0)), 0, 100),
+      spiderAuto: Math.max(0, parseNumber(payload.spiderAuto, Number(base.spiderAuto || 0))),
+      spiderTeleop: Math.max(0, parseNumber(payload.spiderTeleop, Number(base.spiderTeleop || 0))),
       spiderDefense: clamp(parseNumber(payload.spiderDefense, Number(base.spiderDefense || 0)), 0, 100),
       spiderCycleSpeed: clamp(parseNumber(payload.spiderCycleSpeed, Number(base.spiderCycleSpeed || 0)), 0, 100),
       spiderReliability: clamp(parseNumber(payload.spiderReliability, Number(base.spiderReliability || 0)), 0, 100),
-      spiderEndgame: clamp(parseNumber(payload.spiderEndgame, Number(base.spiderEndgame || 0)), 0, 100),
+      spiderEndgame: Math.max(0, parseNumber(payload.spiderEndgame, Number(base.spiderEndgame || 0))),
       notes: String(payload.notes || base.notes || '').trim(),
       lastComputed: new Date()
     };
@@ -1713,6 +1768,102 @@ router.get('/schedule/:eventKey', async (req, res) => {
   });
 
   res.json(schedule);
+});
+
+router.get('/missing-scouting/:eventKey', async (req, res) => {
+  const eventKey = String(req.params.eventKey || '').trim();
+  if (!eventKey) {
+    return res.status(400).json({ error: 'eventKey is required' });
+  }
+
+  try {
+    const [matches, reports] = await Promise.all([
+      prisma.match.findMany({
+        where: { eventKey },
+        select: {
+          matchKey: true,
+          compLevel: true,
+          matchNumber: true,
+          setNumber: true,
+          predictedTime: true,
+          redTeam1: true,
+          redTeam2: true,
+          redTeam3: true,
+          blueTeam1: true,
+          blueTeam2: true,
+          blueTeam3: true
+        },
+        orderBy: [{ compLevel: 'asc' }, { setNumber: 'asc' }, { matchNumber: 'asc' }]
+      }),
+      prisma.matchScoutingReport.findMany({
+        where: { eventKey, matchNumber: { not: null } },
+        select: { compLevel: true, matchNumber: true, teamNumber: true }
+      })
+    ]);
+
+    const reportedByMatch = new Map();
+    for (const row of reports) {
+      const compLevel = String(row.compLevel || '').toLowerCase();
+      const matchNumber = Number(row.matchNumber || 0);
+      const teamNumber = Number(row.teamNumber || 0);
+      if (!compLevel || !matchNumber || !teamNumber) continue;
+
+      const key = `${compLevel}:${matchNumber}`;
+      if (!reportedByMatch.has(key)) reportedByMatch.set(key, new Set());
+      reportedByMatch.get(key).add(teamNumber);
+    }
+
+    const missingMatches = [];
+    for (const match of matches) {
+      const compLevel = String(match.compLevel || '').toLowerCase();
+      const matchNumber = Number(match.matchNumber || 0);
+      if (!compLevel || !matchNumber) continue;
+
+      const scheduledTeams = [
+        Number(match.redTeam1 || 0),
+        Number(match.redTeam2 || 0),
+        Number(match.redTeam3 || 0),
+        Number(match.blueTeam1 || 0),
+        Number(match.blueTeam2 || 0),
+        Number(match.blueTeam3 || 0)
+      ].filter((team) => team > 0);
+
+      if (!scheduledTeams.length) continue;
+
+      const key = `${compLevel}:${matchNumber}`;
+      const reportedTeams = reportedByMatch.get(key) || new Set();
+      const missingTeams = scheduledTeams.filter((team) => !reportedTeams.has(team));
+
+      if (!missingTeams.length) continue;
+
+      const when = match.predictedTime ? new Date(match.predictedTime) : null;
+      missingMatches.push({
+        matchKey: match.matchKey,
+        compLevel,
+        matchNumber,
+        setNumber: Number(match.setNumber || 1),
+        scheduledDate: when ? when.toISOString().slice(0, 10) : null,
+        scheduledTime: when ? when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : null,
+        redTeams: [match.redTeam1, match.redTeam2, match.redTeam3].map((team) => Number(team || 0)).filter((team) => team > 0),
+        blueTeams: [match.blueTeam1, match.blueTeam2, match.blueTeam3].map((team) => Number(team || 0)).filter((team) => team > 0),
+        missingTeams,
+        missingCount: missingTeams.length
+      });
+    }
+
+    return res.json({
+      eventKey,
+      matchCount: matches.length,
+      missingMatchCount: missingMatches.length,
+      missingTeamCount: missingMatches.reduce((sum, row) => sum + Number(row.missingCount || 0), 0),
+      rows: missingMatches
+    });
+  } catch (error) {
+    return res.status(500).json({
+      errorCode: 'E_MISSING_SCOUTING_LOOKUP_FAILED',
+      error: error.message || 'Failed loading missing scouting records'
+    });
+  }
 });
 
 router.get('/leaderboard/:eventKey', async (req, res) => {

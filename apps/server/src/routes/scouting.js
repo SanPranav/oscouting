@@ -51,10 +51,21 @@ router.post('/match', async (req, res) => {
   try {
     const raw = req.body || {};
     const normalized = await normalizeMatchSubmission(raw);
+    const eventKey = String(raw.eventKey || normalized.event_key || '').trim();
+
+    if (!eventKey) {
+      return res.status(400).json({ error: 'eventKey is required' });
+    }
+    if (!normalized.team_number) {
+      return res.status(400).json({ error: 'team_number is required' });
+    }
+
+    await ensureEvent(eventKey);
+    await ensureTeam(normalized.team_number);
 
     const report = await prisma.matchScoutingReport.create({
       data: {
-        eventKey: raw.eventKey,
+        eventKey,
         teamNumber: normalized.team_number,
         scoutName: raw.scoutName || 'unknown',
         allianceColor: normalized.alliance_color,
@@ -84,7 +95,7 @@ router.post('/match', async (req, res) => {
       }
     });
 
-    const stats = await recomputeTeamStats(raw.eventKey, normalized.team_number);
+    const stats = await recomputeTeamStats(eventKey, normalized.team_number);
 
     return res.status(201).json({
       report,
