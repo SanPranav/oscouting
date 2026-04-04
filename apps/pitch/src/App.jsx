@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, PlayCircle, Target } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ExternalLink, Maximize2, PlayCircle, Target } from 'lucide-react';
 
 const CORE_STATS = [
   '5-6 fuel per second',
@@ -56,6 +56,7 @@ const VIDEO_SLIDES = [
     id: 'q10',
     title: 'Qual 10 Passing (0:52-0:58)',
     note: 'Midfield passing sequence. Intake fix now makes this action repeatable.',
+    videoId: '5Lmilw1VQgg',
     embed: 'https://www.youtube.com/embed/5Lmilw1VQgg?start=52&end=58&rel=0',
     cta: 'https://www.youtube.com/watch?v=5Lmilw1VQgg&t=52s'
   },
@@ -63,26 +64,50 @@ const VIDEO_SLIDES = [
     id: 'q16',
     title: 'Qual 16 Defense (1:56-2:07)',
     note: 'Second-half defense on 2637; beaching issue was fixed after this match.',
+    videoId: 'dtGHVJEymwo',
     embed: 'https://www.youtube.com/embed/dtGHVJEymwo?start=116&end=127&rel=0',
     cta: 'https://www.youtube.com/watch?v=dtGHVJEymwo&t=116s'
   },
   {
     id: 'q51',
-    title: 'Qual 51 Result Context',
-    note: '108 points by 3749 in this match window. Context: other two alliance robots were kitbots/no-shows.',
-    embed: '',
-    cta: 'https://www.thebluealliance.com/match/2026caasv_qm51'
+    title: 'Qual 51 Full Match',
+    note: 'Full match replay for Q51.',
+    videoId: 'l9qa9BvcE-c',
+    embed: 'https://www.youtube.com/embed/l9qa9BvcE-c?rel=0',
+    cta: 'https://www.youtube.com/watch?v=l9qa9BvcE-c'
   }
 ];
 
 export default function App() {
   const [imageReady, setImageReady] = useState(true);
   const [activeFocusId, setActiveFocusId] = useState(POSTER_FOCUS[0].id);
+  const videoCardRefs = useRef({});
 
   const activeFocus = useMemo(
     () => POSTER_FOCUS.find((focus) => focus.id === activeFocusId) || POSTER_FOCUS[0],
     [activeFocusId]
   );
+
+  const openFullscreen = (videoId) => {
+    const node = videoCardRefs.current[videoId];
+    if (!node) {
+      return;
+    }
+
+    if (node.requestFullscreen) {
+      node.requestFullscreen();
+      return;
+    }
+
+    if (node.webkitRequestFullscreen) {
+      node.webkitRequestFullscreen();
+    }
+  };
+
+  const getLoopedEmbed = (item) => {
+    const loopParams = `&loop=1&playlist=${item.videoId}`;
+    return `${item.embed}${loopParams}`;
+  };
 
   useEffect(() => {
     const targets = Array.from(document.querySelectorAll('[data-focus-step]'));
@@ -289,14 +314,23 @@ export default function App() {
               <h3 className="text-base font-semibold">{item.title}</h3>
               <p className="mt-2 text-xs text-blue-100/85">{item.note}</p>
               {item.embed ? (
-                <div className="mt-3 overflow-hidden rounded-lg border border-cyan-300/20">
+                <div ref={(node) => { videoCardRefs.current[item.id] = node; }} className="relative mt-3 overflow-hidden rounded-lg border border-cyan-300/20">
                   <iframe
                     className="video-frame"
-                    src={item.embed}
+                    src={getLoopedEmbed(item)}
                     title={item.title}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
                     allowFullScreen
                   />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-cyan-300/30 bg-blue-950/75 px-2 py-1 text-[11px] font-semibold text-cyan-100 shadow-lg backdrop-blur hover:bg-blue-900/85"
+                    onClick={() => openFullscreen(item.id)}
+                    aria-label={`Open ${item.title} fullscreen`}
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    Fullscreen
+                  </button>
                 </div>
               ) : (
                 <div className="mt-3 rounded-lg border border-cyan-300/20 bg-blue-950/45 p-3 text-xs text-cyan-100/90">

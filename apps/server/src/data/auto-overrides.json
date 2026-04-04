@@ -4,7 +4,7 @@
     "autoDescription": "2073 1 and 1/2 cycle auto. very good and consistent."
   },
   "2026caasv:294": {
-    "autoDid": false,
+    "autoDid": true,
     "autoDescription": "—"
   },
   "2026caasv:846": {
@@ -66,5 +66,17 @@
   "2026caasv:2404": {
     "autoDid": false,
     "autoDescription": "Didn’t move"
+  },
+  "2026caasv:399": {
+    "autoDid": true,
+    "autoDescription": "Went through trench to get to middle, got stuck in trench on the way back"
+  },
+  "2026caasv:1452": {
+    "autoDid": true,
+    "autoDescription": "Goes to middle to pick ip and the shoots and then goes to depot to pick up"
+  },
+  "2026caasv:4738": {
+    "autoDid": true,
+    "autoDescription": "Goes through trench, neutral zone, cycles once (shoots eerything to hub), but risky because it crosses center line"
   }
 }
