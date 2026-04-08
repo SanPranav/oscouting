@@ -29,10 +29,6 @@ const initial = {
   cycles: 0,
   cycleAccuracy: 3,
   cycleNotes: '',
-  drivingBehavior: 3,
-  drivingBehaviorNotes: '',
-  drivingTeamBehavior: 3,
-  drivingTeamBehaviorNotes: '',
   climb: 'none',
   intakeType: 'idk',
   usingDepot: 'idk',
@@ -178,10 +174,6 @@ const buildPayloadFromForm = (form, scores, competition) => {
     `crossed_center_line=${form.crossedCenterLine}`,
     `cycle_accuracy=${form.cycleAccuracy}`,
     `cycle_notes=${form.cycleNotes}`,
-    `driving_behavior=${form.drivingBehavior}`,
-    `driving_behavior_notes=${form.drivingBehaviorNotes}`,
-    `driving_team_behavior=${form.drivingTeamBehavior}`,
-    `driving_team_behavior_notes=${form.drivingTeamBehaviorNotes}`,
     `intake_type=${form.intakeType}`,
     `using_depot=${form.usingDepot}`,
     `passing=${form.passing}`,
@@ -210,8 +202,8 @@ const buildPayloadFromForm = (form, scores, competition) => {
     auto_hub_shift_won: false,
     teleop_fuel_scored: phaseTotals.teleop,
     teleop_fuel_missed: 0,
-    teleop_defense_rating: Number(form.drivingTeamBehavior),
-    teleop_speed_rating: Number(form.drivingBehavior),
+    teleop_defense_rating: 3,
+    teleop_speed_rating: 3,
     teleop_crossed_bump: toBoolFromYes(form.usingBump),
     teleop_crossed_trench: toBoolFromYes(form.usingTrench),
     endgame_result: parseClimb(form.climb),
@@ -710,18 +702,6 @@ export default function MatchTabletPage() {
               onChange={(value) => setField('cycleAccuracy', value)}
             />
             <div className="space-y-2"><label className="text-sm text-muted-foreground">Addtional Cycle Notes</label><Input className="h-11" value={form.cycleNotes} onChange={(e) => setField('cycleNotes', e.target.value)} /></div>
-            <RatingSlider
-              label="Driving Behaviour"
-              value={form.drivingBehavior}
-              onChange={(value) => setField('drivingBehavior', value)}
-            />
-            <div className="space-y-2"><label className="text-sm text-muted-foreground">Elaborate (Jerky, smooth etc.)</label><Input className="h-11" value={form.drivingBehaviorNotes} onChange={(e) => setField('drivingBehaviorNotes', e.target.value)} /></div>
-            <RatingSlider
-              label="Driving TEAM Behavior"
-              value={form.drivingTeamBehavior}
-              onChange={(value) => setField('drivingTeamBehavior', value)}
-            />
-            <div className="space-y-2"><label className="text-sm text-muted-foreground">Driving TEAM Elaborate</label><Input className="h-11" value={form.drivingTeamBehaviorNotes} onChange={(e) => setField('drivingTeamBehaviorNotes', e.target.value)} /></div>
             <div className="space-y-2">
               <label className="text-sm text-muted-foreground">Climb</label>
               <Select value={form.climb} onValueChange={(value) => setField('climb', value)}>
