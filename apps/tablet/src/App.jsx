@@ -10,10 +10,15 @@ const ROOT_PATH = '/';
 const MATCH_PATH = '/match-tablet';
 const PIT_PATH = '/pit-tablet';
 
-function normalizePath(pathname) {
-  if (!pathname) return ROOT_PATH;
-  if (pathname.length > 1 && pathname.endsWith('/')) return pathname.slice(0, -1);
-  return pathname;
+function normalizeRoute(route) {
+  if (!route) return ROOT_PATH;
+  if (route.length > 1 && route.endsWith('/')) return route.slice(0, -1);
+  return route;
+}
+
+function readRouteFromHash() {
+  const hash = String(window.location.hash || '').replace(/^#/, '');
+  return normalizeRoute(hash || ROOT_PATH);
 }
 
 function Launcher({ onNavigate }) {
@@ -46,18 +51,19 @@ function Launcher({ onNavigate }) {
 }
 
 export default function App() {
-  const [path, setPath] = useState(() => normalizePath(window.location.pathname));
+  const [path, setPath] = useState(() => readRouteFromHash());
 
   useEffect(() => {
-    const onPopState = () => setPath(normalizePath(window.location.pathname));
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    const onHashChange = () => setPath(readRouteFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
   const navigate = (nextPath) => {
-    const normalized = normalizePath(nextPath);
-    if (normalizePath(window.location.pathname) !== normalized) {
-      window.history.pushState({}, '', normalized);
+    const normalized = normalizeRoute(nextPath);
+    if (readRouteFromHash() !== normalized) {
+      window.location.hash = normalized;
+      return;
     }
     setPath(normalized);
   };

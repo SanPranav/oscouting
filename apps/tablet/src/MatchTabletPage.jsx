@@ -13,7 +13,7 @@ import {
 } from './components/ui/select';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const DEFAULT_EVENT_KEY = '';
+const DEFAULT_EVENT_KEY = '2026cascmp';
 const DEFAULT_COMPETITION_YEAR = 2026;
 const DEFAULT_COMPETITION_QUERY = 'FIRST California Southern State Championship presented by Qualcomm';
 
@@ -160,6 +160,16 @@ const parsePenaltyCount = (value) => {
 };
 
 const toBoolFromYes = (value) => String(value || '').toLowerCase() === 'yes';
+
+const readJsonIfAvailable = async (response) => {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) return null;
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
 
 const buildPayloadFromForm = (form, scores, competition) => {
   const eventKey = String(competition?.eventKey || form.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
@@ -377,9 +387,9 @@ export default function MatchTabletPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(competition)
     });
-    const data = await response.json();
+    const data = await readJsonIfAvailable(response);
     if (!response.ok) {
-      throw new Error(data.errorCode ? `${data.errorCode}: ${data.error || 'Failed saving competition'}` : (data.error || 'Failed saving competition'));
+      throw new Error(data?.errorCode ? `${data.errorCode}: ${data.error || 'Failed saving competition'}` : (data?.error || 'Failed saving competition'));
     }
     return data;
   };
@@ -397,9 +407,12 @@ export default function MatchTabletPage() {
       setCompetitionLoading(true);
       try {
         const response = await fetch(`${API_BASE}/api/strategy/competitions?year=${DEFAULT_COMPETITION_YEAR}`);
-        const data = await response.json();
+        const data = await readJsonIfAvailable(response);
         if (!response.ok) {
-          throw new Error(data.errorCode ? `${data.errorCode}: ${data.error || 'Failed loading competitions'}` : (data.error || 'Failed loading competitions'));
+          throw new Error(data?.errorCode ? `${data.errorCode}: ${data.error || 'Failed loading competitions'}` : (data?.error || 'Failed loading competitions'));
+        }
+        if (!data) {
+          throw new Error('Competition endpoint returned non-JSON response');
         }
         const nextCompetitions = Array.isArray(data.competitions) ? data.competitions : [];
         setCompetitions(nextCompetitions);
