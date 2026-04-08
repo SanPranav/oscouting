@@ -7,7 +7,7 @@ import { Badge } from './components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './components/ui/table';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const DEFAULT_EVENT_KEY = '2026caasv';
+const DEFAULT_EVENT_KEY = '';
 
 const MODE_MATCH = 'match';
 const MODE_PIT = 'pit';
@@ -66,7 +66,7 @@ const normalizeMissingScoutingRow = (row) => ({
 export default function App() {
   const [mode, setMode] = useState(MODE_MATCH);
   const [eventKey, setEventKey] = useState(DEFAULT_EVENT_KEY);
-  const [matchKey, setMatchKey] = useState('qm24');
+  const [matchKey, setMatchKey] = useState('');
   const [rows, setRows] = useState([]);
   const [message, setMessage] = useState('');
   const [pasteText, setPasteText] = useState('');
@@ -231,7 +231,14 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/strategy/selected-event`);
       const data = await response.json();
 
-      if (!response.ok || !data?.eventKey) throw new Error(data?.error || 'Failed loading selected competition');
+      if (!response.ok) throw new Error(data?.error || 'Failed loading selected competition');
+
+      if (!data?.eventKey) {
+        sharedSelectionSnapshotRef.current = buildSelectionSnapshot(data || {});
+        setEventKey('');
+        if (mode === MODE_MATCH) setMatchKey('');
+        return;
+      }
 
       consecutiveSyncFailuresRef.current = 0;
       lastSyncFailureMessageRef.current = '';
@@ -303,12 +310,12 @@ export default function App() {
     return `${sourceLabel}: Import completed`;
   };
 
-  const load = async ({ silent = false, progressBase = 0, progressSpan = 100 } = {}, targetEventKey = eventKey, targetMode = mode) => {
+  const load = async ({ silent = false, progressBase = 0, progressSpan = 100 } = {}, _targetEventKey = eventKey, targetMode = mode) => {
     if (!silent) startLoading(targetMode === MODE_MATCH ? 'Loading match stats...' : 'Loading pit reports...');
     try {
       const endpoint = targetMode === MODE_MATCH
-        ? `${API_BASE}/api/strategy/stats/${targetEventKey}`
-        : `${API_BASE}/api/strategy/pit/${targetEventKey}`;
+        ? `${API_BASE}/api/strategy/stats-all`
+        : `${API_BASE}/api/strategy/pit-all`;
 
       const { response, data } = await fetchJsonWithProgress(
         endpoint,
@@ -335,8 +342,12 @@ export default function App() {
         : pitRows.map((row) => normalizePitRow(row));
 
       setRows(normalizedRows);
-      if (mode === MODE_PIT && !silent && data && !Array.isArray(data)) {
-        setMessage(`TBA roster filtered (${data.teamCount || 0} teams): loaded ${data.pitReportCount ?? pitRows.length} reports`);
+      if (!silent && data && !Array.isArray(data)) {
+        if (targetMode === MODE_PIT) {
+          setMessage(`Loaded ${data.pitReportCount ?? pitRows.length} pit reports across all teams with data.`);
+        } else {
+          setMessage(`Loaded ${normalizedRows.length} teams with available scouting/stat data.`);
+        }
       }
     } catch {
       setMessage('E_SERVER_UNREACHABLE: backend request failed');
@@ -784,10 +795,23 @@ export default function App() {
   };
 
   const openMissingScoutingModal = async () => {
+    const rawCompetition = window.prompt('Which competition/event key for Missing Scouts? (type an event key or dcmp)', String(eventKey || '').trim());
+    if (rawCompetition === null) return;
+
+    const normalizedCompetition = String(rawCompetition || '').trim().toLowerCase() === 'dcmp'
+      ? '2026cascmp'
+      : String(rawCompetition || '').trim();
+
+    if (!normalizedCompetition) {
+      setMessage('Please provide a competition event key (or type dcmp).');
+      return;
+    }
+
+    setEventKey(normalizedCompetition);
     setMissingModalOpen(true);
     setMissingLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/strategy/missing-scouting/${encodeURIComponent(eventKey)}`);
+      const response = await fetch(`${API_BASE}/api/strategy/missing-scouting/${encodeURIComponent(normalizedCompetition)}`);
       const data = await response.json();
       if (!response.ok) {
         setMessage(data.error || 'Failed loading missing scouting list');
@@ -853,10 +877,6 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Input value={eventKey} onChange={(e) => setEventKey(e.target.value)} placeholder="event key (e.g. 2026casnd)" />
-            {mode === MODE_MATCH ? (
-              <Input value={matchKey} onChange={(e) => setMatchKey(e.target.value)} placeholder="match (e.g. qm24 or 24)" />
-            ) : null}
             <Button onClick={() => load()}>Load {mode === MODE_MATCH ? 'Stats' : 'Pit Reports'}</Button>
             {mode === MODE_MATCH ? (
               <>

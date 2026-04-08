@@ -6,13 +6,89 @@ import { Input } from './components/ui/input';
 import { Badge } from './components/ui/badge';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
-const DEFAULT_EVENT_KEY = '2026caasv';
+const DEFAULT_EVENT_KEY = '';
 const DEFAULT_MATCH_SUFFIX = 'qm5';
+const DEFAULT_COMPETITION_YEAR = '2026';
+const DEFAULT_COMPETITION_QUERY = 'FIRST California Southern State Championship presented by Qualcomm 2026';
 
 const competitionLabel = (competition) => {
   if (!competition?.eventKey) return 'Choose a competition';
   const details = [competition.name, competition.location].filter(Boolean).join(' · ');
   return details ? `${competition.eventKey} - ${details}` : competition.eventKey;
+};
+
+const normalizeCompetitionText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+
+const findDefaultCompetition = (competitions = []) => {
+  const needles = ['california southern state championship', 'qualcomm'];
+  return competitions.find((competition) => {
+    const searchable = normalizeCompetitionText(`${competition?.name || ''} ${competition?.shortName || ''}`);
+    return needles.every((needle) => searchable.includes(needle));
+  }) || competitions[0] || null;
+};
+
+const searchMatchesCompetition = (competition, query) => {
+  const normalizedQuery = normalizeCompetitionText(query).trim();
+  if (!normalizedQuery) return true;
+
+  const searchable = normalizeCompetitionText([
+    competition?.name,
+    competition?.shortName,
+    competition?.eventKey,
+    competition?.districtName,
+    competition?.location
+  ].filter(Boolean).join(' '));
+
+  if (normalizedQuery === 'dcmp') {
+    return searchable.includes('district championship')
+      || searchable.includes('state championship')
+      || searchable.includes('championship')
+      || searchable.includes('cmp');
+  }
+
+  return normalizedQuery
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((token) => searchable.includes(token));
+};
+
+const getCompetitionSearchRank = (competition, query) => {
+  const normalizedQuery = normalizeCompetitionText(query).trim();
+  if (!normalizedQuery) return 0;
+
+  const searchable = normalizeCompetitionText([
+    competition?.name,
+    competition?.shortName,
+    competition?.eventKey,
+    competition?.districtName,
+    competition?.location
+  ].filter(Boolean).join(' '));
+
+  const isQualcommStateChamp = normalizeCompetitionText(DEFAULT_COMPETITION_QUERY)
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((token) => searchable.includes(token));
+
+  if (normalizedQuery === 'dcmp') {
+    if (isQualcommStateChamp) return -100;
+    if (searchable.includes('state championship')) return -80;
+    if (searchable.includes('district championship')) return -60;
+    if (searchable.includes('championship')) return -40;
+    return 0;
+  }
+
+  if (isQualcommStateChamp) return -20;
+  if (searchable.includes(normalizedQuery)) return -10;
+  return 0;
+};
+
+const mergeCompetitionIntoList = (previous, competition) => {
+  const next = competition || null;
+  if (!next?.eventKey) return Array.isArray(previous) ? previous : [];
+  const current = Array.isArray(previous) ? previous : [];
+  const existingIndex = current.findIndex((item) => String(item?.eventKey || '') === String(next.eventKey));
+  if (existingIndex < 0) return [next, ...current];
+  return current.map((item, index) => (index === existingIndex ? { ...item, ...next } : item));
 };
 
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
@@ -133,6 +209,35 @@ const normalizeCompetitionTeamsText = (input) => {
   return raw;
 };
 
+const formatScheduleTextFromRows = (rows) => {
+  const matches = Array.isArray(rows) ? rows : [];
+  if (!matches.length) return 'match schedule unreleased';
+
+  const header = 'match_key,comp_level,set_number,match_number,red1,red2,red3,blue1,blue2,blue3,predicted_time';
+  const lines = matches.map((row) => [
+    String(row.matchKey || ''),
+    String(row.compLevel || ''),
+    Number(row.setNumber || 1),
+    Number(row.matchNumber || 0),
+    Number(row.redTeams?.[0] || 0),
+    Number(row.redTeams?.[1] || 0),
+    Number(row.redTeams?.[2] || 0),
+    Number(row.blueTeams?.[0] || 0),
+    Number(row.blueTeams?.[1] || 0),
+    Number(row.blueTeams?.[2] || 0),
+    String(row.predictedTime || '')
+  ].join(','));
+
+  return [header, ...lines].join('\n');
+};
+
+const formatTeamsText = (teamNumbers) => {
+  const teams = [...new Set((Array.isArray(teamNumbers) ? teamNumbers : [])
+    .map((team) => Number.parseInt(String(team), 10))
+    .filter((team) => Number.isFinite(team) && team > 0))].sort((a, b) => a - b);
+  return teams.join('\n');
+};
+
 const readJsonSafe = async (response) => {
   const bodyText = await response.text();
   if (!bodyText || !bodyText.trim()) return {};
@@ -212,16 +317,18 @@ const getDraftInputKey = (allianceSeed, roundNumber) => `${Number(allianceSeed)}
 
 export default function App() {
   const [eventKey, setEventKey] = useState(DEFAULT_EVENT_KEY);
-  const [matchKey, setMatchKey] = useState(`${DEFAULT_EVENT_KEY}_${DEFAULT_MATCH_SUFFIX}`);
+  const [matchKey, setMatchKey] = useState('');
   const [teamNumber, setTeamNumber] = useState('3749');
   const [competitionPickerOpen, setCompetitionPickerOpen] = useState(true);
-  const [competitionYear, setCompetitionYear] = useState(String(new Date().getFullYear()));
+  const [competitionYear, setCompetitionYear] = useState(DEFAULT_COMPETITION_YEAR);
   const [competitionLoading, setCompetitionLoading] = useState(false);
   const [competitionError, setCompetitionError] = useState('');
   const [selectedCompetition, setSelectedCompetition] = useState(null);
+  const [competitions, setCompetitions] = useState([]);
+  const [competitionSearch, setCompetitionSearch] = useState('');
   const [competitionReady, setCompetitionReady] = useState(false);
-  const [competitionName, setCompetitionName] = useState('Aerospace Valley');
-  const [competitionMatchKey, setCompetitionMatchKey] = useState(`${DEFAULT_EVENT_KEY}_${DEFAULT_MATCH_SUFFIX}`);
+  const [competitionName, setCompetitionName] = useState(DEFAULT_COMPETITION_QUERY);
+  const [competitionMatchKey, setCompetitionMatchKey] = useState('');
   const [competitionScheduleText, setCompetitionScheduleText] = useState('');
   const [competitionTeamsText, setCompetitionTeamsText] = useState('');
   const [result, setResult] = useState(null);
@@ -285,6 +392,12 @@ export default function App() {
   };
 
   const isLoading = (key) => Number(loadingCounts[key] || 0) > 0;
+
+  const filteredCompetitions = useMemo(() => (
+    competitions
+      .filter((competition) => searchMatchesCompetition(competition, competitionSearch))
+      .sort((a, b) => getCompetitionSearchRank(a, competitionSearch) - getCompetitionSearchRank(b, competitionSearch))
+  ), [competitions, competitionSearch]);
 
   const buildLockedPicks = () => {
     if (!allianceProjection?.alliances?.length) return [];
@@ -445,6 +558,34 @@ export default function App() {
     return data;
   };
 
+  const loadScheduleAndTeamsFromApi = async (targetEventKey) => {
+    const event = String(targetEventKey || '').trim();
+    if (!event) {
+      return { scheduleText: 'match schedule unreleased', teamsText: '' };
+    }
+
+    const [scheduleRes, teamsRes] = await Promise.all([
+      fetch(`${API_BASE}/api/strategy/schedule/${event}?refreshTba=true`),
+      fetch(`${API_BASE}/api/strategy/teams/${event}?refreshTba=true`)
+    ]);
+
+    const scheduleData = await readJsonSafe(scheduleRes);
+    const teamsData = await readJsonSafe(teamsRes);
+
+    const scheduleRows = scheduleRes.ok && Array.isArray(scheduleData) ? scheduleData : [];
+    const scheduleText = formatScheduleTextFromRows(scheduleRows);
+    const teamsTextFromTeamsRoute = teamsRes.ok ? formatTeamsText(teamsData.teamNumbers) : '';
+    const teamsTextFromSchedule = formatTeamsText(scheduleRows.flatMap((row) => [
+      ...(Array.isArray(row.redTeams) ? row.redTeams : []),
+      ...(Array.isArray(row.blueTeams) ? row.blueTeams : [])
+    ]));
+
+    return {
+      scheduleText,
+      teamsText: teamsTextFromTeamsRoute || teamsTextFromSchedule || ''
+    };
+  };
+
   const setCompetitionSelection = async (competition, options = {}) => {
     const nextCompetition = competition || null;
     const nextEventKey = String(nextCompetition?.eventKey || '').trim();
@@ -460,14 +601,18 @@ export default function App() {
     setCompetitionLoading(true);
     setCompetitionError('');
     try {
+      const autoConfig = await loadScheduleAndTeamsFromApi(nextEventKey);
+      const resolvedScheduleText = String(autoConfig.scheduleText || competitionScheduleText || '').trim() || 'match schedule unreleased';
+      const resolvedTeamsText = String(autoConfig.teamsText || normalizedTeamsText || '').trim();
+
       const saved = await saveSelectedCompetition({
         eventKey: nextEventKey,
-        name: competitionName || nextEventKey,
-        shortName: competitionName || nextEventKey,
-        matchKey: competitionMatchKey || nextMatchKey,
-        year: competitionYear,
-        scheduleText: competitionScheduleText,
-        teamsText: normalizedTeamsText
+        name: String(nextCompetition?.name || nextCompetition?.shortName || competitionName || nextEventKey),
+        shortName: String(nextCompetition?.shortName || nextCompetition?.name || competitionName || nextEventKey),
+        matchKey: String(nextCompetition?.matchKey || competitionMatchKey || nextMatchKey),
+        year: String(nextCompetition?.year || competitionYear),
+        scheduleText: resolvedScheduleText,
+        teamsText: resolvedTeamsText
       });
       const resolvedCompetition = {
         eventKey: String(saved.eventKey || nextEventKey),
@@ -476,8 +621,8 @@ export default function App() {
         year: Number(saved.year || nextCompetition.year || new Date().getFullYear()),
         week: Number(saved.week || nextCompetition.week || 0),
         matchKey: String(saved.matchKey || competitionMatchKey || nextMatchKey || ''),
-        scheduleText: String(saved.scheduleText || competitionScheduleText || ''),
-        teamsText: String(saved.teamsText || normalizedTeamsText || ''),
+        scheduleText: String(saved.scheduleText || resolvedScheduleText || ''),
+        teamsText: String(saved.teamsText || resolvedTeamsText || ''),
         startDate: String(saved.startDate || nextCompetition.startDate || ''),
         endDate: String(saved.endDate || nextCompetition.endDate || ''),
         location: String(saved.location || nextCompetition.location || ''),
@@ -492,9 +637,10 @@ export default function App() {
       setEventKey(nextEventKey);
       setMatchKey(String(resolvedCompetition.matchKey || nextMatchKey));
       setCompetitionName(String(resolvedCompetition.name || nextEventKey));
+      setCompetitionSearch(String(resolvedCompetition.name || resolvedCompetition.shortName || nextEventKey));
       setCompetitionMatchKey(String(resolvedCompetition.matchKey || nextMatchKey));
       setCompetitionScheduleText(String(resolvedCompetition.scheduleText || ''));
-      setCompetitionTeamsText(String(resolvedCompetition.teamsText || normalizedTeamsText || ''));
+      setCompetitionTeamsText(String(resolvedCompetition.teamsText || resolvedTeamsText || ''));
       setCompetitionPickerOpen(Boolean(options.keepOpen));
 
       if (allianceModalOpen) {
@@ -507,22 +653,38 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const normalizedSearch = normalizeCompetitionText(competitionSearch).trim();
+    if (normalizedSearch !== 'dcmp') return;
+    const topMatch = filteredCompetitions[0];
+    if (!topMatch?.eventKey || String(topMatch.eventKey) === String(selectedCompetition?.eventKey || '')) return;
+    void setCompetitionSelection(topMatch, { keepOpen: true });
+  }, [competitionSearch, filteredCompetitions, selectedCompetition?.eventKey]);
+
   const loadCompetitionContext = async () => {
     try {
       setCompetitionError('');
       const selectedRes = await fetch(`${API_BASE}/api/strategy/selected-event`);
-
       const selectedData = await readJsonSafe(selectedRes);
 
       if (!selectedRes.ok) {
         throw new Error(selectedData.errorCode ? `${selectedData.errorCode}: ${selectedData.error || 'Failed loading selected competition'}` : (selectedData.error || 'Failed loading selected competition'));
       }
 
+      const selectedYear = String(selectedData.year || DEFAULT_COMPETITION_YEAR);
+      const competitionsRes = await fetch(`${API_BASE}/api/strategy/competitions?year=${encodeURIComponent(selectedYear)}`);
+      const competitionsData = await readJsonSafe(competitionsRes);
+      const nextCompetitions = Array.isArray(competitionsData.competitions) ? competitionsData.competitions : [];
+      setCompetitions(nextCompetitions);
+
+      const selectedFromList = nextCompetitions.find((competition) => String(competition.eventKey || '') === String(selectedData.eventKey || '')) || null;
+      const preferredFallback = findDefaultCompetition(nextCompetitions);
+
       const nextSelected = {
         eventKey: String(selectedData.eventKey || DEFAULT_EVENT_KEY),
-        name: String(selectedData.name || selectedData.shortName || selectedData.eventKey || DEFAULT_EVENT_KEY),
-        shortName: String(selectedData.shortName || selectedData.name || selectedData.eventKey || DEFAULT_EVENT_KEY),
-        year: Number(selectedData.year || new Date().getFullYear()),
+        name: String(selectedData.name || selectedFromList?.name || selectedFromList?.shortName || preferredFallback?.name || preferredFallback?.shortName || selectedData.shortName || selectedData.eventKey || DEFAULT_COMPETITION_QUERY),
+        shortName: String(selectedData.shortName || selectedFromList?.shortName || selectedFromList?.name || preferredFallback?.shortName || preferredFallback?.name || selectedData.name || selectedData.eventKey || DEFAULT_COMPETITION_QUERY),
+        year: Number(selectedData.year || selectedFromList?.year || preferredFallback?.year || DEFAULT_COMPETITION_YEAR),
         week: Number(selectedData.week || 0),
         matchKey: String(selectedData.matchKey || `${String(selectedData.eventKey || DEFAULT_EVENT_KEY)}_${DEFAULT_MATCH_SUFFIX}`),
         scheduleText: String(selectedData.scheduleText || ''),
@@ -541,9 +703,37 @@ export default function App() {
       setEventKey(nextSelected.eventKey);
       setMatchKey(String(nextSelected.matchKey || `${nextSelected.eventKey}_${DEFAULT_MATCH_SUFFIX}`));
       setCompetitionName(String(nextSelected.name || nextSelected.eventKey));
+      setCompetitionSearch(String(nextSelected.name || nextSelected.shortName || nextSelected.eventKey));
       setCompetitionMatchKey(String(nextSelected.matchKey || `${nextSelected.eventKey}_${DEFAULT_MATCH_SUFFIX}`));
-      setCompetitionScheduleText(String(nextSelected.scheduleText || ''));
-      setCompetitionTeamsText(String(nextSelected.teamsText || ''));
+      const hasSavedSchedule = String(nextSelected.scheduleText || '').trim().length > 0;
+      const hasSavedTeams = String(nextSelected.teamsText || '').trim().length > 0;
+      if (!hasSavedSchedule || !hasSavedTeams) {
+        try {
+          const autoConfig = await loadScheduleAndTeamsFromApi(nextSelected.eventKey);
+          const mergedScheduleText = hasSavedSchedule
+            ? String(nextSelected.scheduleText || '')
+            : String(autoConfig.scheduleText || 'match schedule unreleased');
+          const mergedTeamsText = hasSavedTeams
+            ? String(nextSelected.teamsText || '')
+            : String(autoConfig.teamsText || '');
+
+          setCompetitionScheduleText(mergedScheduleText);
+          setCompetitionTeamsText(mergedTeamsText);
+
+          void saveSelectedCompetition({
+            ...nextSelected,
+            scheduleText: mergedScheduleText,
+            teamsText: mergedTeamsText
+          }).catch(() => null);
+        } catch {
+          setCompetitionScheduleText(String(nextSelected.scheduleText || 'match schedule unreleased'));
+          setCompetitionTeamsText(String(nextSelected.teamsText || ''));
+        }
+      } else {
+        setCompetitionScheduleText(String(nextSelected.scheduleText || ''));
+        setCompetitionTeamsText(String(nextSelected.teamsText || ''));
+      }
+      setCompetitionYear(String(nextSelected.year || DEFAULT_COMPETITION_YEAR));
     } catch (error) {
       setCompetitionError(error.message || 'E_SELECTED_EVENT_UNAVAILABLE: Failed loading selected competition');
     } finally {
@@ -1233,13 +1423,42 @@ export default function App() {
             <CardContent className="space-y-4 overflow-auto p-4">
               {competitionError ? <p className="text-sm text-destructive">{competitionError}</p> : null}
 
+              <div className="space-y-2 rounded-md border border-input bg-background/60 p-3">
+                <label className="block text-xs font-medium text-muted-foreground">Competition Search</label>
+                <Input
+                  value={competitionSearch}
+                  onChange={(e) => setCompetitionSearch(e.target.value)}
+                  placeholder="Type competition name, event key, or dcmp"
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const topMatch = filteredCompetitions[0];
+                    if (!topMatch) return;
+                    setCompetitionSelection(topMatch, { keepOpen: true });
+                  }}
+                />
+                <div className="max-h-40 space-y-1 overflow-auto pr-1">
+                  {filteredCompetitions.slice(0, 12).map((competition) => (
+                    <button
+                      key={competition.eventKey}
+                      type="button"
+                      className="w-full rounded-md border border-input bg-card px-3 py-2 text-left text-xs hover:bg-accent/10"
+                      onClick={() => setCompetitionSelection(competition, { keepOpen: true })}
+                    >
+                      <span className="font-semibold text-foreground">{competition.name || competition.shortName || competition.eventKey}</span>
+                      <span className="ml-2 text-muted-foreground">{competition.eventKey} · {competition.year || competitionYear}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">Event Key</label>
                   <Input
                     value={eventKey}
                     onChange={(e) => setEventKey(e.target.value)}
-                    placeholder="2026caasv"
+                    placeholder="event key (e.g. 2026cascmp)"
                   />
                 </div>
                 <div>
@@ -1247,7 +1466,7 @@ export default function App() {
                   <Input
                     value={competitionName}
                     onChange={(e) => setCompetitionName(e.target.value)}
-                    placeholder="Aerospace Valley"
+                    placeholder="competition name"
                   />
                 </div>
                 <div>

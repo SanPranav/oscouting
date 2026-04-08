@@ -21,9 +21,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOVEMENT_OVERRIDE_PATH = path.resolve(__dirname, '../data/movement-overrides.json');
 const AUTO_OVERRIDE_PATH = path.resolve(__dirname, '../data/auto-overrides.json');
 const DEFAULT_SELECTED_COMPETITION = {
-  eventKey: process.env.DEFAULT_EVENT_KEY || '2026caasv',
-  name: 'Aerospace Valley',
-  shortName: 'Aerospace Valley',
+  eventKey: String(process.env.DEFAULT_EVENT_KEY || '').trim(),
+  name: '',
+  shortName: '',
   matchKey: '',
   scheduleText: '',
   teamsText: ''
@@ -1277,6 +1277,240 @@ router.get('/stats/:eventKey', async (req, res) => {
   res.json(enriched);
 });
 
+router.get('/stats-all', async (_req, res) => {
+  const movementOverrides = await loadMovementOverrides();
+  const autoOverrides = await loadAutoOverrides();
+
+  const allStatsRows = await prisma.teamAggregatedStat.findMany({
+    orderBy: [{ lastComputed: 'desc' }, { createdAt: 'desc' }, { teamNumber: 'asc' }]
+  });
+
+  const latestByTeam = new Map();
+  for (const row of allStatsRows) {
+    const teamNumber = Number(row.teamNumber || 0);
+    if (!teamNumber || latestByTeam.has(teamNumber)) continue;
+    latestByTeam.set(teamNumber, row);
+  }
+
+  const externalAggRows = await prisma.externalScoutImport.groupBy({
+    by: ['teamNumber'],
+    where: { teamNumber: { not: null } },
+    _count: { teamNumber: true },
+    _avg: {
+      autoFuel: true,
+      teleFuel: true,
+      defenseRating: true,
+      fouls: true
+    }
+  });
+
+  const externalAggByTeam = new Map(
+    externalAggRows
+      .filter((row) => Number.isFinite(Number(row.teamNumber)))
+      .map((row) => [
+        Number(row.teamNumber),
+        {
+          matchesScouted: Number(row._count.teamNumber || 0),
+          autoAvg: Number(row._avg.autoFuel || 0),
+          teleAvg: Number(row._avg.teleFuel || 0),
+          defenseAvg: Number(row._avg.defenseRating || 0),
+          foulRate: Number(row._avg.fouls || 0)
+        }
+      ])
+  );
+
+  const allMatchRows = await prisma.matchScoutingReport.findMany({
+    select: {
+      eventKey: true,
+      teamNumber: true,
+      autoFuelAuto: true,
+      autoTowerClimb: true,
+      autoMobility: true,
+      autoHubShiftWon: true,
+      generalNotes: true,
+      createdAt: true,
+      teleopCrossedBump: true,
+      teleopCrossedTrench: true
+    }
+  });
+
+  const reportTeamNumbers = new Set(
+    allMatchRows
+      .map((row) => Number(row.teamNumber || 0))
+      .filter((teamNumber) => Number.isFinite(teamNumber) && teamNumber > 0)
+  );
+
+  for (const [teamNumber] of externalAggByTeam.entries()) {
+    if (!latestByTeam.has(teamNumber)) {
+      latestByTeam.set(teamNumber, buildBaselineTeamStatRow(getSelectedCompetition().eventKey, teamNumber));
+    }
+  }
+  for (const teamNumber of reportTeamNumbers) {
+    if (!latestByTeam.has(teamNumber)) {
+      latestByTeam.set(teamNumber, buildBaselineTeamStatRow(getSelectedCompetition().eventKey, teamNumber));
+    }
+  }
+
+  const mergedData = [...latestByTeam.values()].map((row) => {
+    const external = externalAggByTeam.get(Number(row.teamNumber || 0));
+    if (!external) return row;
+
+    const currentAuto = Number(row.avgAutoTotalPoints || 0);
+    const currentTele = Number(row.avgTeleopTotalPoints || 0);
+    const shouldUseExternal = currentAuto === 0 && currentTele === 0 && (external.autoAvg > 0 || external.teleAvg > 0);
+    if (!shouldUseExternal) return row;
+
+    const autoAvg = external.autoAvg;
+    const teleAvg = external.teleAvg;
+    const defenseAvg = external.defenseAvg;
+    const foulRate = external.foulRate;
+
+    return {
+      ...row,
+      matchesScouted: Math.max(Number(row.matchesScouted || 0), external.matchesScouted),
+      avgAutoTotalPoints: autoAvg,
+      avgTeleopTotalPoints: teleAvg,
+      spiderAuto: clamp(autoAvg * 5, 0, 100),
+      spiderTeleop: clamp(teleAvg * 3, 0, 100),
+      spiderDefense: defenseAvg > 0 ? clamp((defenseAvg / 5) * 100, 0, 100) : row.spiderDefense,
+      foulRate: foulRate > 0 ? foulRate : row.foulRate,
+      spiderReliability: clamp(
+        ((1 - Number(row.disableRate || 0)) * 0.7 + (1 - clamp((foulRate > 0 ? foulRate : Number(row.foulRate || 0)) / 3, 0, 1)) * 0.3) * 100,
+        0,
+        100
+      )
+    };
+  });
+
+  const movementByTeam = new Map();
+  const autoByTeam = new Map();
+  const notesByTeam = new Map();
+
+  for (const row of allMatchRows) {
+    const teamNumber = Number(row.teamNumber);
+    if (!teamNumber) continue;
+
+    if (!movementByTeam.has(teamNumber)) {
+      movementByTeam.set(teamNumber, {
+        total: 0,
+        bumpCrosses: 0,
+        trenchCrosses: 0
+      });
+    }
+
+    const agg = movementByTeam.get(teamNumber);
+    agg.total += 1;
+    if (row.teleopCrossedBump) agg.bumpCrosses += 1;
+    if (row.teleopCrossedTrench) agg.trenchCrosses += 1;
+
+    if (!autoByTeam.has(teamNumber)) {
+      autoByTeam.set(teamNumber, {
+        autoRuns: 0,
+        latestCreatedAt: 0,
+        latestDescription: '',
+        eventKey: String(row.eventKey || '')
+      });
+    }
+
+    if (!notesByTeam.has(teamNumber)) {
+      notesByTeam.set(teamNumber, {
+        latestCreatedAt: 0,
+        latestNote: ''
+      });
+    }
+
+    const autoAgg = autoByTeam.get(teamNumber);
+    const hadAutoAction = Boolean(
+      Number(row.autoFuelAuto || 0) > 0
+      || Number(row.autoTowerClimb || 0) > 0
+      || row.autoMobility
+      || row.autoHubShiftWon
+    );
+    if (hadAutoAction) autoAgg.autoRuns += 1;
+
+    const noteAutoPath = parseAutoPathFromNotes(row.generalNotes || '');
+    const noteDisplay = parseDisplayNotesFromGeneralNotes(row.generalNotes || '');
+    const createdAtValue = new Date(row.createdAt || 0).valueOf();
+    if (noteAutoPath && createdAtValue >= autoAgg.latestCreatedAt) {
+      autoAgg.latestCreatedAt = createdAtValue;
+      autoAgg.latestDescription = noteAutoPath;
+      autoAgg.eventKey = String(row.eventKey || autoAgg.eventKey || '');
+    }
+
+    const noteAgg = notesByTeam.get(teamNumber);
+    if (noteDisplay && createdAtValue >= noteAgg.latestCreatedAt) {
+      noteAgg.latestCreatedAt = createdAtValue;
+      noteAgg.latestNote = noteDisplay;
+    }
+  }
+
+  const teams = mergedData.map((row) => Number(row.teamNumber || 0)).filter((teamNumber) => teamNumber > 0);
+  const statboticsByTeam = await fetchStatboticsByTeams(teams);
+
+  const enriched = mergedData
+    .map((row) => {
+      const teamNumber = Number(row.teamNumber || 0);
+      const sb = statboticsByTeam.get(teamNumber);
+      const movement = movementByTeam.get(teamNumber);
+      const auto = autoByTeam.get(teamNumber);
+      const teamNotes = notesByTeam.get(teamNumber);
+      const bumpUsed = Boolean(movement && movement.bumpCrosses > 0);
+      const trenchUsed = Boolean(movement && movement.trenchCrosses > 0);
+      const autoDid = Boolean((auto && auto.autoRuns > 0) || Number(row.avgAutoTotalPoints || 0) > 0);
+      const autoDescription = auto && auto.latestDescription ? auto.latestDescription : '—';
+      const autoOverrideKey = movementKey(auto?.eventKey || String(row.eventKey || ''), teamNumber);
+      const autoOverride = autoOverrides[autoOverrideKey] || null;
+      const finalAutoDid = autoOverride && Object.prototype.hasOwnProperty.call(autoOverride, 'autoDid')
+        ? normalizeAutoDid(autoOverride.autoDid, autoDid)
+        : autoDid;
+      const overrideAutoDescription = autoOverride ? normalizeAutoDescription(autoOverride.autoDescription || '') : '';
+      const finalAutoDescription = overrideAutoDescription || autoDescription;
+      const finalNotes = String(row.notes || '').trim() || String(teamNotes?.latestNote || '').trim() || '—';
+      const movementProfile = trenchUsed && bumpUsed
+        ? 'both'
+        : trenchUsed
+          ? 'trench'
+          : bumpUsed
+            ? 'bump'
+            : 'none';
+
+      const overrideProfile = normalizeMovementProfile(movementOverrides[autoOverrideKey] || '');
+      const finalMovementProfile = overrideProfile !== 'none' ? overrideProfile : movementProfile;
+      const finalTrenchUsed = finalMovementProfile === 'trench' || finalMovementProfile === 'both';
+      const finalBumpUsed = finalMovementProfile === 'bump' || finalMovementProfile === 'both';
+
+      return {
+        ...row,
+        movementProfile: finalMovementProfile,
+        trenchUsed: finalTrenchUsed,
+        bumpUsed: finalBumpUsed,
+        autoDid: finalAutoDid,
+        autoDescription: finalAutoDescription,
+        notes: finalNotes,
+        movementSampleSize: movement ? movement.total : 0,
+        trenchCrossCount: movement ? movement.trenchCrosses : 0,
+        bumpCrossCount: movement ? movement.bumpCrosses : 0,
+        statbotics: sb
+          ? {
+              epa: Number(sb.epa.toFixed(2)),
+              autoEPA: Number(sb.autoEPA.toFixed(2)),
+              teleopEPA: Number(sb.teleopEPA.toFixed(2)),
+              endgameEPA: Number(sb.endgameEPA.toFixed(2)),
+              normEPA: Number(sb.normEPA.toFixed(2)),
+              rank: sb.rank,
+              wins: sb.wins,
+              losses: sb.losses,
+              ties: sb.ties,
+              percentile: Number(sb.percentile.toFixed(2))
+            }
+          : null
+      };
+    })
+    .sort((a, b) => Number(b.spiderReliability || 0) - Number(a.spiderReliability || 0) || Number(a.teamNumber || 0) - Number(b.teamNumber || 0));
+
+  res.json(enriched);
+});
+
 router.get('/pit/:eventKey', async (req, res) => {
   const eventKey = req.params.eventKey;
   try {
@@ -1353,6 +1587,69 @@ router.get('/pit/:eventKey', async (req, res) => {
       error: error.message || 'Unable to load TBA team roster for pit filtering'
     });
   }
+});
+
+router.get('/pit-all', async (_req, res) => {
+  const reports = await prisma.pitScoutingReport.findMany({
+    orderBy: [{ createdAt: 'desc' }]
+  });
+
+  const latestByTeam = new Map();
+  for (const report of reports) {
+    const teamNumber = Number(report.teamNumber || 0);
+    if (!teamNumber || latestByTeam.has(teamNumber)) continue;
+    latestByTeam.set(teamNumber, report);
+  }
+
+  const rows = [...latestByTeam.values()]
+    .map((report) => {
+      const tags = String(report.aiTags || '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+      return {
+        eventKey: report.eventKey,
+        teamNumber: report.teamNumber,
+        scoutName: report.scoutName,
+        hopperCapacity: report.hopperCapacity ?? null,
+        drivetrainType: report.drivetrainType || 'unknown',
+        swerveModuleType: report.swerveModuleType || '',
+        swerveGearing: report.swerveGearing || '',
+        canUseTrench: Boolean(report.canUseTrench),
+        canCrossBump: Boolean(report.canCrossBump),
+        cycleBallsPerSec: Number(report.cycleBallsPerSec || 0),
+        cycleSpeed: report.cycleSpeed || 'unknown',
+        outpostCapability: Boolean(report.outpostCapability),
+        depotCapability: Boolean(report.depotCapability),
+        intakeType: report.intakeType || 'unknown',
+        shooterType: report.shooterType || 'unknown',
+        visionType: report.visionType || 'unknown',
+        autoPaths: report.autoPaths || '',
+        climberType: report.climberType || 'unknown',
+        climbCapability: report.climbCapability || 'unknown',
+        hasGroundIntake: Boolean(report.hasGroundIntake),
+        hasSourceIntake: Boolean(report.hasSourceIntake),
+        driveMotorType: report.driveMotorType || 'unknown',
+        shooterMotorType: report.shooterMotorType || 'unknown',
+        intakeMotorType: report.intakeMotorType || 'unknown',
+        climberMotorType: report.climberMotorType || 'unknown',
+        softwareFeatures: report.softwareFeatures || '',
+        mechanicalFeatures: report.mechanicalFeatures || '',
+        mechanismNotes: report.mechanismNotes || '',
+        aiTags: tags,
+        aiConfidenceScore: Number(report.aiConfidenceScore || 0),
+        updatedAt: report.updatedAt,
+        createdAt: report.createdAt
+      };
+    })
+    .sort((a, b) => a.teamNumber - b.teamNumber);
+
+  res.json({
+    filteredBy: 'all_pit_reports',
+    pitReportCount: rows.length,
+    rows
+  });
 });
 
 router.get('/stats/:eventKey/:teamNumber', async (req, res) => {
@@ -1696,6 +1993,57 @@ router.get('/predict/:eventKey/:matchKey', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+router.get('/teams/:eventKey', async (req, res) => {
+  const eventKey = String(req.params.eventKey || '').trim();
+  if (!eventKey) {
+    return res.status(400).json({ error: 'eventKey is required' });
+  }
+
+  const forceTbaRefresh = String(req.query.refreshTba || '').toLowerCase() === 'true';
+
+  try {
+    await maybeRefreshScheduleFromTba(eventKey, forceTbaRefresh);
+
+    const tbaTeams = await fetchTbaEventTeamNumbers(eventKey).catch(() => []);
+    if (Array.isArray(tbaTeams) && tbaTeams.length) {
+      return res.json({
+        eventKey,
+        teamNumbers: [...new Set(tbaTeams.map((team) => Number(team)).filter((team) => Number.isFinite(team) && team > 0))].sort((a, b) => a - b),
+        source: 'tba'
+      });
+    }
+
+    const rows = await prisma.match.findMany({
+      where: { eventKey },
+      select: {
+        redTeam1: true,
+        redTeam2: true,
+        redTeam3: true,
+        blueTeam1: true,
+        blueTeam2: true,
+        blueTeam3: true
+      }
+    });
+
+    const teamNumbers = [...new Set(rows
+      .flatMap((row) => [row.redTeam1, row.redTeam2, row.redTeam3, row.blueTeam1, row.blueTeam2, row.blueTeam3])
+      .map((team) => Number(team))
+      .filter((team) => Number.isFinite(team) && team > 0)
+    )].sort((a, b) => a - b);
+
+    return res.json({
+      eventKey,
+      teamNumbers,
+      source: 'schedule_fallback'
+    });
+  } catch (error) {
+    return res.status(503).json({
+      errorCode: 'E_TEAMS_FETCH_FAILED',
+      error: error.message || 'Unable to load teams for event'
+    });
   }
 });
 

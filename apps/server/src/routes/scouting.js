@@ -66,6 +66,7 @@ router.post('/match', async (req, res) => {
     const report = await prisma.matchScoutingReport.create({
       data: {
         eventKey,
+        matchKey: String(raw.matchKey || '').trim() || null,
         teamNumber: normalized.team_number,
         scoutName: raw.scoutName || 'unknown',
         allianceColor: normalized.alliance_color,
