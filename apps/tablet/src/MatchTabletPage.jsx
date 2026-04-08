@@ -16,6 +16,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 const DEFAULT_EVENT_KEY = '2026cascmp';
 const DEFAULT_COMPETITION_YEAR = 2026;
 const DEFAULT_COMPETITION_QUERY = 'FIRST California Southern State Championship presented by Qualcomm';
+const IS_STATIC_GH_PAGES = typeof window !== 'undefined' && /github\.io$/i.test(window.location.hostname) && !API_BASE;
 
 const initial = {
   eventKey: '',
@@ -382,6 +383,8 @@ export default function MatchTabletPage() {
   const resetScores = () => setScores(createInitialScoreState());
 
   const syncSelectedCompetition = async (competition) => {
+    if (!API_BASE) return { ok: true, selectedCompetition: competition };
+
     const response = await fetch(`${API_BASE}/api/strategy/selected-event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -405,6 +408,21 @@ export default function MatchTabletPage() {
   useEffect(() => {
     const loadCompetitionList = async () => {
       setCompetitionLoading(true);
+
+      if (IS_STATIC_GH_PAGES) {
+        const fallbackCompetition = {
+          eventKey: DEFAULT_EVENT_KEY,
+          name: DEFAULT_COMPETITION_QUERY,
+          shortName: DEFAULT_COMPETITION_QUERY,
+          year: DEFAULT_COMPETITION_YEAR
+        };
+        setCompetitions([fallbackCompetition]);
+        selectCompetition(fallbackCompetition);
+        setCompetitionError('');
+        setCompetitionLoading(false);
+        return;
+      }
+
       try {
         const response = await fetch(`${API_BASE}/api/strategy/competitions?year=${DEFAULT_COMPETITION_YEAR}`);
         const data = await readJsonIfAvailable(response);

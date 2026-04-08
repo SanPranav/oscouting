@@ -10,15 +10,27 @@ const ROOT_PATH = '/';
 const MATCH_PATH = '/match-tablet';
 const PIT_PATH = '/pit-tablet';
 
+const LEGACY_ROUTE_MAP = {
+  '/matchscouting': MATCH_PATH,
+  '/match-scouting': MATCH_PATH,
+  '/pitscouting': PIT_PATH,
+  '/pit-scouting': PIT_PATH
+};
+
 function normalizeRoute(route) {
   if (!route) return ROOT_PATH;
-  if (route.length > 1 && route.endsWith('/')) return route.slice(0, -1);
-  return route;
+  const trimmed = route.length > 1 && route.endsWith('/') ? route.slice(0, -1) : route;
+  return LEGACY_ROUTE_MAP[trimmed] || trimmed;
 }
 
 function readRouteFromHash() {
   const hash = String(window.location.hash || '').replace(/^#/, '');
-  return normalizeRoute(hash || ROOT_PATH);
+  if (hash) return normalizeRoute(hash);
+
+  // Fallback for static hosts that may land on index with a non-root pathname.
+  const pathname = String(window.location.pathname || '/');
+  const normalizedPathname = pathname.replace(/\/oscouting$/, '').replace(/\/oscouting\//, '/');
+  return normalizeRoute(normalizedPathname || ROOT_PATH);
 }
 
 function Launcher({ onNavigate }) {
