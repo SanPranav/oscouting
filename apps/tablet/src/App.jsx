@@ -68,5 +68,7 @@ export default function App() {
     return <Launcher onNavigate={navigate} />;
   }, [path]);
 
-  return content;
+  return <>
+    {content}
+  </>;
 }

@@ -317,9 +317,12 @@ export default function MatchTabletPage() {
 
   const filteredCompetitionOptions = useMemo(() => (
     competitionOptions
+      .filter((competition) => String(competition?.eventKey || '').trim())
       .filter((competition) => searchMatchesCompetition(competition, competitionSearch))
       .sort((a, b) => getCompetitionSearchRank(a, competitionSearch) - getCompetitionSearchRank(b, competitionSearch))
   ), [competitionOptions, competitionSearch]);
+
+  const selectedEventValue = String(selectedEventKey || '').trim() || undefined;
 
   const phaseTotals = useMemo(() => computePhaseTotals(scores), [scores]);
 
@@ -594,7 +597,7 @@ export default function MatchTabletPage() {
                   await handleCompetitionSelected(topMatch);
                 }}
               />
-              <Select value={selectedEventKey} onValueChange={async (value) => {
+              <Select value={selectedEventValue} onValueChange={async (value) => {
                 const nextCompetition = competitionOptions.find((competition) => competition.eventKey === value) || {
                   eventKey: value,
                   name: value,
