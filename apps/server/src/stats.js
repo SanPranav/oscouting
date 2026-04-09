@@ -33,12 +33,12 @@ export async function recomputeTeamStats(eventKey, teamNumber) {
       climbSuccessRate: climbSuccess,
       disableRate,
       foulRate,
-      spiderAuto: clamp(autoAvg * 5, 0, 100),
-      spiderTeleop: clamp(teleAvg * 3, 0, 100),
+      spiderAuto: Math.max(0, autoAvg * 5),
+      spiderTeleop: Math.max(0, teleAvg * 3),
       spiderDefense: clamp((defenseAvg / 5) * 100, 0, 100),
       spiderCycleSpeed: clamp((speedAvg / 5) * 100, 0, 100),
       spiderReliability: clamp(((1 - disableRate) * 0.7 + (1 - clamp(foulRate / 3, 0, 1)) * 0.3) * 100, 0, 100),
-      spiderEndgame: clamp((climbSuccess * 0.6 + clamp(endAvg / 30, 0, 1) * 0.4) * 100, 0, 100),
+      spiderEndgame: Math.max(0, (climbSuccess * 0.6 + clamp(endAvg / 30, 0, 1) * 0.4) * 100),
       lastComputed: new Date()
     },
     create: {
@@ -52,12 +52,12 @@ export async function recomputeTeamStats(eventKey, teamNumber) {
       climbSuccessRate: climbSuccess,
       disableRate,
       foulRate,
-      spiderAuto: clamp(autoAvg * 5, 0, 100),
-      spiderTeleop: clamp(teleAvg * 3, 0, 100),
+      spiderAuto: Math.max(0, autoAvg * 5),
+      spiderTeleop: Math.max(0, teleAvg * 3),
       spiderDefense: clamp((defenseAvg / 5) * 100, 0, 100),
       spiderCycleSpeed: clamp((speedAvg / 5) * 100, 0, 100),
       spiderReliability: clamp(((1 - disableRate) * 0.7 + (1 - clamp(foulRate / 3, 0, 1)) * 0.3) * 100, 0, 100),
-      spiderEndgame: clamp((climbSuccess * 0.6 + clamp(endAvg / 30, 0, 1) * 0.4) * 100, 0, 100),
+      spiderEndgame: Math.max(0, (climbSuccess * 0.6 + clamp(endAvg / 30, 0, 1) * 0.4) * 100),
       lastComputed: new Date()
     }
   });

@@ -589,10 +589,9 @@ function computePickLeaderboard(statsRows, ourTeam, context) {
         endgamePointsAvg: 0,
         count: 0
       };
-      const reportScore = clamp(
-        reportStats.autoFuelAvg * 4 + reportStats.teleFuelAvg * 2.5 + reportStats.endgamePointsAvg * 2,
+      const reportScore = Math.max(
         0,
-        100
+        reportStats.autoFuelAvg * 4 + reportStats.teleFuelAvg * 2.5 + reportStats.endgamePointsAvg * 2
       );
 
       const capability = (
