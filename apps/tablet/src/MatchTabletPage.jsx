@@ -204,7 +204,7 @@ const readJsonIfAvailable = async (response) => {
 };
 
 const buildPayloadFromForm = (form, scores, competition) => {
-  const eventKey = String(competition?.eventKey || form.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
+  const eventKey = String(form.eventKey || competition?.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
   const derivedMatchKey = deriveMatchKey(eventKey, parseNumberOr(form.matchNum, 1));
   const matchKey = String(form.matchKey || derivedMatchKey).trim() || derivedMatchKey;
   const competitionYear = Number(competition?.year || DEFAULT_COMPETITION_YEAR);
@@ -333,7 +333,7 @@ export default function MatchTabletPage() {
     }
   });
 
-  const selectedEventKey = String(selectedCompetition?.eventKey || form.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
+  const selectedEventKey = String(form.eventKey || selectedCompetition?.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
   const suggestedMatchKey = deriveMatchKey(selectedEventKey, parseNumberOr(form.matchNum, 1));
 
   const competitionOptions = useMemo(() => {
@@ -383,6 +383,7 @@ export default function MatchTabletPage() {
     setCompetitionYear(Number(nextCompetition?.year || DEFAULT_COMPETITION_YEAR));
     if (nextCompetition?.eventKey) {
       setField('eventKey', nextCompetition.eventKey);
+      setField('matchKey', deriveMatchKey(nextCompetition.eventKey, parseNumberOr(form.matchNum, 1)));
     }
     setCompetitionSearch(String(nextCompetition?.name || nextCompetition?.shortName || nextCompetition?.eventKey || ''));
   };
@@ -416,6 +417,12 @@ export default function MatchTabletPage() {
       shortName: selectedCompetition?.shortName || DEFAULT_COMPETITION_QUERY,
       year: competitionYear
     };
+  };
+
+  const applyAutofill = async () => {
+    const nextCompetition = resolveAutofillCompetition();
+    if (!nextCompetition?.eventKey) return;
+    await handleCompetitionSelected(nextCompetition);
   };
 
   const adjustScore = (phase, field, delta) => {
@@ -665,9 +672,7 @@ export default function MatchTabletPage() {
                   onKeyDown={async (e) => {
                     if (e.key !== 'Enter') return;
                     e.preventDefault();
-                    const nextCompetition = resolveAutofillCompetition();
-                    if (!nextCompetition?.eventKey) return;
-                    await handleCompetitionSelected(nextCompetition);
+                    await applyAutofill();
                   }}
                 />
                 <Button
@@ -675,9 +680,7 @@ export default function MatchTabletPage() {
                   variant="outline"
                   className="h-11 rounded-xl px-4"
                   onClick={async () => {
-                    const nextCompetition = resolveAutofillCompetition();
-                    if (!nextCompetition?.eventKey) return;
-                    await handleCompetitionSelected(nextCompetition);
+                    await applyAutofill();
                   }}
                 >
                   Autofill
@@ -709,7 +712,18 @@ export default function MatchTabletPage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Event key</label>
-                <Input className="h-11 rounded-xl" value={form.eventKey} onChange={(e) => setField('eventKey', e.target.value)} placeholder="e.g. 2026cascmp" />
+                <Input
+                  className="h-11 rounded-xl"
+                  value={form.eventKey}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setField('eventKey', nextValue);
+                    if (selectedCompetition?.eventKey && String(selectedCompetition.eventKey) !== String(nextValue)) {
+                      setSelectedCompetition(null);
+                    }
+                  }}
+                  placeholder="e.g. 2026cascmp"
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Event year</label>
