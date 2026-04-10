@@ -20,6 +20,7 @@ const IS_STATIC_GH_PAGES = typeof window !== 'undefined' && /github\.io$/i.test(
 
 const initial = {
   eventKey: '',
+  matchKey: '',
   scoutName: '',
   matchNum: 1,
   teamNumber: 3749,
@@ -147,6 +148,36 @@ const getCompetitionSearchRank = (competition, query) => {
   return 0;
 };
 
+const guessCompetitionFromSearch = (query, year) => {
+  const raw = String(query || '').trim();
+  const normalized = normalizeCompetitionText(raw);
+  const eventYear = Number(year) || DEFAULT_COMPETITION_YEAR;
+  if (!raw) return null;
+
+  if (
+    normalized.includes('los angeles')
+    || normalized.includes('qualcomm')
+    || normalized.includes('state championship')
+    || normalized === 'dcmp'
+  ) {
+    return {
+      eventKey: DEFAULT_EVENT_KEY,
+      name: DEFAULT_COMPETITION_QUERY,
+      shortName: DEFAULT_COMPETITION_QUERY,
+      year: eventYear
+    };
+  }
+
+  const slug = normalized.replace(/[^a-z0-9]+/g, '').slice(0, 12);
+  const fallbackEventKey = `${eventYear}${slug || 'event'}`;
+  return {
+    eventKey: fallbackEventKey,
+    name: raw,
+    shortName: raw,
+    year: eventYear
+  };
+};
+
 const parseClimb = (value) => {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'l1') return 'level1';
@@ -174,7 +205,8 @@ const readJsonIfAvailable = async (response) => {
 
 const buildPayloadFromForm = (form, scores, competition) => {
   const eventKey = String(competition?.eventKey || form.eventKey || DEFAULT_EVENT_KEY).trim() || DEFAULT_EVENT_KEY;
-  const matchKey = deriveMatchKey(eventKey, parseNumberOr(form.matchNum, 1));
+  const derivedMatchKey = deriveMatchKey(eventKey, parseNumberOr(form.matchNum, 1));
+  const matchKey = String(form.matchKey || derivedMatchKey).trim() || derivedMatchKey;
   const competitionYear = Number(competition?.year || DEFAULT_COMPETITION_YEAR);
   const competitionName = String(competition?.name || competition?.shortName || DEFAULT_COMPETITION_QUERY).trim();
   const phaseTotals = computePhaseTotals(scores);
@@ -326,6 +358,7 @@ export default function MatchTabletPage() {
   ), [competitionOptions, competitionSearch]);
 
   const selectedEventValue = String(selectedEventKey || '').trim() || undefined;
+  const resolvedMatchKey = String(form.matchKey || suggestedMatchKey).trim() || suggestedMatchKey;
 
   const phaseTotals = useMemo(() => computePhaseTotals(scores), [scores]);
 
@@ -368,6 +401,21 @@ export default function MatchTabletPage() {
     } catch {
       // Keep the local selection even if the shared update fails.
     }
+  };
+
+  const resolveAutofillCompetition = () => {
+    const topMatch = filteredCompetitionOptions[0];
+    if (topMatch) return topMatch;
+
+    const guessed = guessCompetitionFromSearch(competitionSearch, competitionYear);
+    if (guessed) return guessed;
+
+    return {
+      eventKey: selectedEventKey,
+      name: selectedCompetition?.name || DEFAULT_COMPETITION_QUERY,
+      shortName: selectedCompetition?.shortName || DEFAULT_COMPETITION_QUERY,
+      year: competitionYear
+    };
   };
 
   const adjustScore = (phase, field, delta) => {
@@ -617,9 +665,9 @@ export default function MatchTabletPage() {
                   onKeyDown={async (e) => {
                     if (e.key !== 'Enter') return;
                     e.preventDefault();
-                    const topMatch = filteredCompetitionOptions[0];
-                    if (!topMatch) return;
-                    await handleCompetitionSelected(topMatch);
+                    const nextCompetition = resolveAutofillCompetition();
+                    if (!nextCompetition?.eventKey) return;
+                    await handleCompetitionSelected(nextCompetition);
                   }}
                 />
                 <Button
@@ -627,9 +675,9 @@ export default function MatchTabletPage() {
                   variant="outline"
                   className="h-11 rounded-xl px-4"
                   onClick={async () => {
-                    const topMatch = filteredCompetitionOptions[0];
-                    if (!topMatch) return;
-                    await handleCompetitionSelected(topMatch);
+                    const nextCompetition = resolveAutofillCompetition();
+                    if (!nextCompetition?.eventKey) return;
+                    await handleCompetitionSelected(nextCompetition);
                   }}
                 >
                   Autofill
@@ -669,7 +717,7 @@ export default function MatchTabletPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Match key</label>
-                <Input className="h-11 rounded-xl" value={suggestedMatchKey} readOnly />
+                <Input className="h-11 rounded-xl" value={resolvedMatchKey} onChange={(e) => setField('matchKey', e.target.value)} placeholder={suggestedMatchKey} />
               </div>
             </div>
           </div>
