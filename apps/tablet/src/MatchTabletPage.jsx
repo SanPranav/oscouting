@@ -607,19 +607,34 @@ export default function MatchTabletPage() {
 
             <div className="mt-4 space-y-2">
               <label className="text-sm text-muted-foreground">Competition name</label>
-              <Input
-                className="h-11 rounded-xl"
-                placeholder="Search competition (e.g. dcmp or Qualcomm)"
-                value={competitionSearch}
-                onChange={(e) => setCompetitionSearch(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key !== 'Enter') return;
-                  e.preventDefault();
-                  const topMatch = filteredCompetitionOptions[0];
-                  if (!topMatch) return;
-                  await handleCompetitionSelected(topMatch);
-                }}
-              />
+              <div className="flex gap-2">
+                <Input
+                  className="h-11 flex-1 rounded-xl"
+                  placeholder="Search competition (e.g. dcmp or Qualcomm)"
+                  autoComplete="organization"
+                  value={competitionSearch}
+                  onChange={(e) => setCompetitionSearch(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const topMatch = filteredCompetitionOptions[0];
+                    if (!topMatch) return;
+                    await handleCompetitionSelected(topMatch);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl px-4"
+                  onClick={async () => {
+                    const topMatch = filteredCompetitionOptions[0];
+                    if (!topMatch) return;
+                    await handleCompetitionSelected(topMatch);
+                  }}
+                >
+                  Autofill
+                </Button>
+              </div>
               <Select value={selectedEventValue} onValueChange={async (value) => {
                 const nextCompetition = competitionOptions.find((competition) => competition.eventKey === value) || {
                   eventKey: value,
@@ -646,15 +661,15 @@ export default function MatchTabletPage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Event key</label>
-                <Input className="h-11 rounded-xl bg-muted/40" value={selectedEventKey} readOnly />
+                <Input className="h-11 rounded-xl" value={form.eventKey} onChange={(e) => setField('eventKey', e.target.value)} placeholder="e.g. 2026cascmp" />
               </div>
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Event year</label>
-                <Input className="h-11 rounded-xl bg-muted/40" value={competitionYear} readOnly />
+                <Input className="h-11 rounded-xl" type="number" value={competitionYear} onChange={(e) => setCompetitionYear(parseNumberOr(e.target.value, DEFAULT_COMPETITION_YEAR))} placeholder="2026" />
               </div>
               <div className="space-y-2">
                 <label className="text-sm text-muted-foreground">Match key</label>
-                <Input className="h-11 rounded-xl bg-muted/40" value={suggestedMatchKey} readOnly />
+                <Input className="h-11 rounded-xl" value={suggestedMatchKey} readOnly />
               </div>
             </div>
           </div>
@@ -693,7 +708,7 @@ export default function MatchTabletPage() {
           </div>
 
           <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2"><label className="text-sm text-muted-foreground">Your name</label><Input className="h-11" value={form.scoutName} onChange={(e) => setField('scoutName', e.target.value)} /></div>
+            <div className="space-y-2"><label className="text-sm text-muted-foreground">Your name</label><Input className="h-11" autoComplete="name" value={form.scoutName} onChange={(e) => setField('scoutName', e.target.value)} /></div>
             <div className="space-y-2"><label className="text-sm text-muted-foreground">Match Num</label><Input className="h-11" type="number" value={form.matchNum} onChange={(e) => setNumericField('matchNum', e.target.value)} /></div>
             <div className="space-y-2"><label className="text-sm text-muted-foreground">Team Number You Are Scouting</label><Input className="h-11" type="number" value={form.teamNumber} onChange={(e) => setNumericField('teamNumber', e.target.value)} /></div>
             <div className="space-y-2"><label className="text-sm text-muted-foreground">Starting Position (1 left, 3 right)</label><Input className="h-11" value={form.startingPosition} onChange={(e) => setField('startingPosition', e.target.value)} placeholder="1/2/3" /></div>
